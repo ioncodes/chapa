@@ -1,0 +1,11 @@
+[package]
+name = "chapa"
+version = "0.1.0"
+edition = "2021"
+description = "Bitfield structs with MSB-0 and LSB-0 support"
+
+[dependencies]
+chapa-macros = { path = "../chapa-macros" }
+
+[dev-dependencies]
+trybuild = "1"

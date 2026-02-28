@@ -1,0 +1,177 @@
+# chapa
+
+Bitfield structs, batteries included!
+
+`chapa` exposes a single attribute macro, `#[bitfield]`, that turns an ordinary
+struct into newtype backed by a single primitive. Every field maps to an exact
+range of bits and gets a generated getter, setter, and `with_*` builder.
+
+## Features
+
+- **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
+- **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
+- **Nested bitfields**: Embed one bitfield struct inside another
+- **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
+- **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
+- **Overlays**: Allow multiple logically distinct field groups to share the same bit range
+
+## Installation
+
+```toml
+[dependencies]
+chapa = { git = "http://github.com/ioncodes/chapa" }
+```
+
+## Quick start
+
+```rust
+use chapa::bitfield;
+
+// An 8-bit status register, bit 0 is the LSB
+#[bitfield(u8, order = lsb0)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct StatusReg {
+    #[bits(0)] enabled: bool,
+    #[bits(1..=3)] mode: u8,
+    #[bits(4..=7)] _reserved: u8 // Can be ommited; "_" makes it readonly
+}
+
+let r = StatusReg::new()
+    .with_enabled(true)
+    .with_mode(5);
+
+assert_eq!(r.enabled(), true);
+assert_eq!(r.mode(), 5);
+assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
+```
+
+## `#[bitfield(...)]` options
+
+| Option                                | Required | Description                                       |
+| ------------------------------------- | -------- | ------------------------------------------------- |
+| `u8` / `u16` / `u32` / `u64` / `u128` | Yes      | Backing storage type                              |
+| `order = msb0` / `order = lsb0`       | Yes      | Bit numbering convention                          |
+| `width = N`                           | No       | Effective logical width, must be <= storage width |
+
+## `#[bits(...)]` options
+
+| Option              | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| `N`                 | Single bit at index N                             |
+| `N..=M`             | Inclusive range from bit N to bit M               |
+| `N..M`              | Half-open range (equivalent to `N..=(M-1)`)       |
+| `readonly`          | Suppress `set_*` and `with_*` generation          |
+| `alias = "name"`    | Generate additional accessor under `name`         |
+| `alias = ["a","b"]` | Multiple aliases                                  |
+| `overlay = "group"` | Allow overlap with fields in other overlay groups |
+
+## MSB-0 example
+
+```rust
+use chapa::bitfield;
+
+// A 32-bit value where bit 0 is the most-significant bit
+#[bitfield(u32, order = msb0)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ControlWord {
+    #[bits(0..=3)] opcode: u8,
+    #[bits(4..=7)] dst: u8,
+    #[bits(8..=31, readonly)] payload: u32,
+}
+
+let cw = ControlWord::new()
+  .with_opcode(0xA)
+  .with_dst(0x3);
+assert_eq!(cw.raw(), 0xA300_0000);
+```
+
+## Enum fields
+
+Use `#[derive(BitEnum)]` on an enum to automatically implement `BitField`,
+allowing it to be used as a bitfield field type. `Copy` and `Clone` are derived
+automatically.
+
+```rust
+use chapa::{bitfield, BitEnum};
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum VideoFormat {
+    Ntsc = 0,
+    Pal = 1,
+    Mpal = 2,
+    Debug = 3,
+}
+
+#[bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DisplayConfig {
+    #[bits(0)] enable: bool,
+    #[bits(1..=2)] fmt: VideoFormat,
+}
+
+let dc = DisplayConfig::new()
+    .with_enable(true)
+    .with_fmt(VideoFormat::Pal);
+assert_eq!(dc.fmt(), VideoFormat::Pal);
+```
+
+Note: Invalid raw values map to the last variant!
+
+## Nested bitfields
+
+A field whose type implements `chapa::BitField` (i.e. any type annotated with
+`#[bitfield]`) can be used as a nested field.
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u8, order = msb0, width = 4)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Nibble {
+    #[bits(0..=1)] high: u8,
+    #[bits(2..=3)] low: u8,
+}
+
+#[bitfield(u32, order = msb0)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Word {
+    #[bits(0..=3)] top: Nibble,
+    #[bits(28..=31)] bot: u8,
+}
+```
+
+## Overlay groups
+
+Fields in **different** overlay groups may share bit ranges. This is useful for
+instruction formats where the same bits are interpreted differently depending on
+other bits. This is useful for instruction decoding, but also to handle specific MMIO registers
+that change their meaning depending on certain encoded bits.
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u32, order = msb0)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Instr {
+    #[bits(0..=5)] opcode: u8,
+
+    #[bits(6..=10,  overlay = "r_form")] rs: u8,
+    #[bits(11..=15, overlay = "r_form")] ra: u8,
+    #[bits(16..=20, overlay = "r_form")] rb: u8,
+
+    #[bits(6..=10,  overlay = "i_form")] dst: u8,
+    #[bits(11..=31, overlay = "i_form")] imm: u32,
+}
+```
+
+## Generated API
+
+For a field `foo: u8` spanning bits `4..=7` the macro generates:
+
+| Item     | Signature                                      |
+| -------- | ---------------------------------------------- |
+| Constant | `pub const FOO_SHIFT: u32`                     |
+| Constant | `pub const FOO_MASK: StorageType`              |
+| Getter   | `pub const fn foo(&self) -> u8`                |
+| Setter   | `pub fn set_foo(&mut self, val: u8)`           |
+| Builder  | `pub const fn with_foo(self, val: u8) -> Self` |
