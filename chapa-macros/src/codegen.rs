@@ -341,6 +341,30 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         }
     };
 
+    // Bitwise ops: &, |, ^, ! with the raw storage type
+    let ops_impls = quote! {
+        impl ::core::ops::BitAnd<#storage_ident> for #name {
+            type Output = Self;
+            #[inline(always)]
+            fn bitand(self, rhs: #storage_ident) -> Self { Self(self.0 & rhs) }
+        }
+        impl ::core::ops::BitOr<#storage_ident> for #name {
+            type Output = Self;
+            #[inline(always)]
+            fn bitor(self, rhs: #storage_ident) -> Self { Self(self.0 | rhs) }
+        }
+        impl ::core::ops::BitXor<#storage_ident> for #name {
+            type Output = Self;
+            #[inline(always)]
+            fn bitxor(self, rhs: #storage_ident) -> Self { Self(self.0 ^ rhs) }
+        }
+        impl ::core::ops::Not for #name {
+            type Output = Self;
+            #[inline(always)]
+            fn not(self) -> Self { Self(!self.0) }
+        }
+    };
+
     // Only emit a Debug impl when the user opted in with `#[derive(Debug)]`.
     let debug_impl = if user_derived_debug {
         let name_str = name.to_string();
@@ -391,6 +415,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
         #trait_impl
         #from_impls
+        #ops_impls
         #debug_impl
     }
 }

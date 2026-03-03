@@ -14,6 +14,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
 - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
+- **Bitwise operators**: `&`, `|`, `^`, `!` with the backing storage type work directly on the struct
 
 ## Installation
 
@@ -164,14 +165,47 @@ pub struct Instr {
 }
 ```
 
+## Bitwise operations
+
+Every bitfield struct implements `BitAnd`, `BitOr`, `BitXor`, and `Not` against
+its backing storage type.
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u32, order = msb0)]
+#[derive(Copy, Clone)]
+pub struct Msr {
+    #[bits(16, alias = "rnd1")] random1: bool,
+    #[bits(17, alias = "rnd2")] random2: bool,
+}
+
+const RESTORE_MASK: u32 = 0x0000_FF73;
+
+let srr1: u32 = 0x0000_8000;
+let msr = Msr::new();
+
+// No .raw() / from_raw() needed:
+let updated = (msr & !RESTORE_MASK) | (srr1 & RESTORE_MASK);
+```
+
 ## Generated API
 
 For a field `foo: u8` spanning bits `4..=7` the macro generates:
 
-| Item     | Signature                                      |
-| -------- | ---------------------------------------------- |
-| Constant | `pub const FOO_SHIFT: u32`                     |
-| Constant | `pub const FOO_MASK: StorageType`              |
-| Getter   | `pub const fn foo(&self) -> u8`                |
-| Setter   | `pub fn set_foo(&mut self, val: u8)`           |
-| Builder  | `pub const fn with_foo(self, val: u8) -> Self` |
+| Item      | Signature                                      |
+| --------- | ---------------------------------------------- |
+| Constant  | `pub const FOO_SHIFT: u32`                     |
+| Constant  | `pub const FOO_MASK: StorageType`              |
+| Getter    | `pub const fn foo(&self) -> u8`                |
+| Setter    | `pub fn set_foo(&mut self, val: u8)`           |
+| Builder   | `pub const fn with_foo(self, val: u8) -> Self` |
+
+Additionally, every struct implements the following traits:
+
+| Trait      | Signature                                      |
+| ---------- | ---------------------------------------------- |
+| `BitAnd`   | `fn bitand(self, rhs: StorageType) -> Self`    |
+| `BitOr`    | `fn bitor(self, rhs: StorageType) -> Self`     |
+| `BitXor`   | `fn bitxor(self, rhs: StorageType) -> Self`    |
+| `Not`      | `fn not(self) -> Self`                         |

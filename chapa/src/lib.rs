@@ -14,6 +14,7 @@
 //! - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
 //! - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 //! - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
+//! - **Bitwise operators**: `&`, `|`, `^`, `!` with the backing storage type work directly on the struct
 //!
 //! ## Quick start
 //!
@@ -157,6 +158,29 @@
 //! }
 //! ```
 //!
+//! ## Bitwise operations
+//!
+//! Every bitfield struct implements [`BitAnd`](core::ops::BitAnd),
+//! [`BitOr`](core::ops::BitOr), [`BitXor`](core::ops::BitXor), and
+//! [`Not`](core::ops::Not) against its backing storage type.
+//!
+//! ```rust
+//! use chapa::bitfield;
+//!
+//! #[bitfield(u32, order = msb0)]
+//! #[derive(Copy, Clone, PartialEq, Debug)]
+//! pub struct StatusReg {
+//!     #[bits(0)] enabled: bool,
+//!     #[bits(1..=7)] flags: u8,
+//! }
+//!
+//! const MASK: u32 = 0x0000_00FF;
+//! let a = StatusReg::new().with_enabled(true);
+//! let b: u32 = 0x0000_00AA;
+//!
+//! let result = (a & !MASK) | (b & MASK); // result: StatusReg
+//! ```
+//!
 //! ## Generated API
 //!
 //! For a field `foo: u8` spanning bits `4..=7` the macro generates:
@@ -168,6 +192,15 @@
 //! | Getter | `pub const fn foo(&self) -> u8` |
 //! | Setter | `pub fn set_foo(&mut self, val: u8)` |
 //! | Builder | `pub const fn with_foo(self, val: u8) -> Self` |
+//!
+//! Additionally, every struct implements the following traits:
+//!
+//! | Trait    | Signature                                   |
+//! |----------|---------------------------------------------|
+//! | `BitAnd` | `fn bitand(self, rhs: StorageType) -> Self` |
+//! | `BitOr`  | `fn bitor(self, rhs: StorageType) -> Self`  |
+//! | `BitXor` | `fn bitxor(self, rhs: StorageType) -> Self` |
+//! | `Not`    | `fn not(self) -> Self`                      |
 
 #![no_std]
 
