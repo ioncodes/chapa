@@ -15,6 +15,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 - **Bitwise operators**: `&`, `|`, `^`, `!` with the backing storage type work directly on the struct
+- **Bit extraction**: `extract_bits!` masks a value to keep only the specified bit ranges
 
 ## Installation
 
@@ -189,23 +190,59 @@ let msr = Msr::new();
 let updated = (msr & !RESTORE_MASK) | (srr1 & RESTORE_MASK);
 ```
 
+## Bit extraction
+
+`extract_bits!` keeps only the specified bit positions from a value, zeroing all others.
+Bits can be single indices or inclusive `start..=end` ranges.
+
+For raw integers, specify the ordering and type explicitly:
+
+```rust
+use chapa::extract_bits;
+
+let val: u32 = 0xFFFF_FFFF;
+// MSB0: keep bits 0, 5–9, 16–31
+let masked = extract_bits!(msb0 u32; val; 0, 5..=9, 16..=31);
+assert_eq!(masked, 0x87C0_FFFF);
+
+// LSB0: keep bits 0–3 and 12–15
+let masked = extract_bits!(lsb0 u16; val as u16; 0..=3, 12..=15);
+assert_eq!(masked, 0xF00F);
+```
+
+For chapa bitfield structs, omit the ordering, it is deduced from the struct's `#[bitfield]` definition and the result is returned as the same struct type:
+
+```rust
+use chapa::{bitfield, extract_bits};
+
+#[bitfield(u32, order = msb0)]
+#[derive(Copy, Clone)]
+pub struct Msr { /* ... */ }
+
+let msr = Msr::from_raw(0xFFFF_FFFF);
+let masked: Msr = extract_bits!(msr; 0..=0, 5..=9, 16..=31);
+let srr1: u32 = masked.raw();
+```
+
+The explicit form (`msb0 u32`) emits `const MASK: T = ...`, so the mask is guaranteed to be computed at compile time. The struct form calls an `#[inline]` helper; LLVM should constant-fold the mask in practice, but there is no language-level guarantee.
+
 ## Generated API
 
 For a field `foo: u8` spanning bits `4..=7` the macro generates:
 
-| Item      | Signature                                      |
-| --------- | ---------------------------------------------- |
-| Constant  | `pub const FOO_SHIFT: u32`                     |
-| Constant  | `pub const FOO_MASK: StorageType`              |
-| Getter    | `pub const fn foo(&self) -> u8`                |
-| Setter    | `pub fn set_foo(&mut self, val: u8)`           |
-| Builder   | `pub const fn with_foo(self, val: u8) -> Self` |
+| Item     | Signature                                      |
+| -------- | ---------------------------------------------- |
+| Constant | `pub const FOO_SHIFT: u32`                     |
+| Constant | `pub const FOO_MASK: StorageType`              |
+| Getter   | `pub const fn foo(&self) -> u8`                |
+| Setter   | `pub fn set_foo(&mut self, val: u8)`           |
+| Builder  | `pub const fn with_foo(self, val: u8) -> Self` |
 
 Additionally, every struct implements the following traits:
 
-| Trait      | Signature                                      |
-| ---------- | ---------------------------------------------- |
-| `BitAnd`   | `fn bitand(self, rhs: StorageType) -> Self`    |
-| `BitOr`    | `fn bitor(self, rhs: StorageType) -> Self`     |
-| `BitXor`   | `fn bitxor(self, rhs: StorageType) -> Self`    |
-| `Not`      | `fn not(self) -> Self`                         |
+| Trait    | Signature                                   |
+| -------- | ------------------------------------------- |
+| `BitAnd` | `fn bitand(self, rhs: StorageType) -> Self` |
+| `BitOr`  | `fn bitor(self, rhs: StorageType) -> Self`  |
+| `BitXor` | `fn bitxor(self, rhs: StorageType) -> Self` |
+| `Not`    | `fn not(self) -> Self`                      |

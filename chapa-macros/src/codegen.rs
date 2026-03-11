@@ -307,10 +307,12 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         }
     }
 
-    // BitField trait impl
+    // BitField trait impl. IS_MSB0 exposes ordering so extract_bits! can deduce it
+    let is_msb0 = def.args.order == BitOrder::Msb0;
     let trait_impl = quote! {
         impl ::chapa::BitField for #name {
             type Storage = #storage_ident;
+            const IS_MSB0: bool = #is_msb0;
 
             #[inline(always)]
             fn from_raw(raw: #storage_ident) -> Self {

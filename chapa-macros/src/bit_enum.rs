@@ -72,6 +72,8 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
 
         impl #impl_generics ::chapa::BitField for #name #ty_generics #where_clause {
             type Storage = #storage_ident;
+            // Enums have no bit ordering; IS_MSB0 is meaningless here but required by the trait.
+            const IS_MSB0: bool = false;
 
             #[inline(always)]
             fn from_raw(raw: #storage_ident) -> Self {

@@ -15,6 +15,7 @@
 //! - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 //! - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 //! - **Bitwise operators**: `&`, `|`, `^`, `!` with the backing storage type work directly on the struct
+//! - **Bit extraction**: [`extract_bits!`] masks a value to keep only the specified bit ranges
 //!
 //! ## Quick start
 //!
@@ -181,6 +182,31 @@
 //! let result = (a & !MASK) | (b & MASK); // result: StatusReg
 //! ```
 //!
+//! ## Bit extraction with `extract_bits!`
+//!
+//! [`extract_bits!`] keeps only the specified bit positions from a value, zeroing all others.
+//! Bits can be single indices or inclusive ranges; the ordering and storage type are either
+//! supplied explicitly (for raw integers) or deduced from the struct's [`BitField`] impl.
+//!
+//! ```rust
+//! use chapa::{bitfield, extract_bits};
+//!
+//! #[bitfield(u32, order = msb0)]
+//! #[derive(Copy, Clone)]
+//! pub struct Msr { /* ... */ }
+//!
+//! let msr = Msr::from_raw(0xFFFF_FFFF);
+//!
+//! // Struct form: ordering deduced; returns Msr with non-selected bits zeroed
+//! let masked: Msr = extract_bits!(msr; 0..=0, 5..=9, 16..=31);
+//!
+//! // Explicit form for raw integers: const-evaluated mask
+//! let raw: u32 = extract_bits!(msb0 u32; 0xFFFF_FFFFu32; 0, 5..=9, 16..=31);
+//! assert_eq!(raw, masked.raw());
+//! ```
+//!
+//! See the [`extract_bits!`] documentation for full syntax details.
+//!
 //! ## Generated API
 //!
 //! For a field `foo: u8` spanning bits `4..=7` the macro generates:
@@ -204,8 +230,11 @@
 
 #![no_std]
 
+pub mod mask;
+
 pub use chapa_macros::bitfield;
 pub use chapa_macros::BitEnum;
+pub use mask::{lsb0_mask, msb0_mask};
 
 /// Trait for types that can be used as the backing storage of a bitfield.
 ///
@@ -215,6 +244,8 @@ pub trait BitStorage: Copy + Sized {
     const BITS: u32;
     /// The zero value for this type.
     const ZERO: Self;
+    /// Truncating cast from `u128` (used by [`extract_bits!`] internals).
+    fn from_u128(v: u128) -> Self;
 }
 
 /// Trait implemented by every struct produced by the [`bitfield`] macro and
@@ -225,6 +256,13 @@ pub trait BitStorage: Copy + Sized {
 pub trait BitField: Copy + Sized {
     /// The underlying storage type (e.g. `u8`, `u32`).
     type Storage: BitStorage;
+
+    /// `true` if this bitfield uses MSB0 ordering (bit 0 = most-significant bit).
+    ///
+    /// Set automatically by the `#[bitfield]` macro. Always `false` for
+    /// `#[derive(BitEnum)]` enums (they have no ordering; they are only
+    /// used as field types and are never passed to [`extract_bits!`]).
+    const IS_MSB0: bool;
 
     /// Wraps a raw storage value in the bitfield newtype.
     fn from_raw(raw: Self::Storage) -> Self;
@@ -240,6 +278,8 @@ macro_rules! impl_bit_storage {
             impl BitStorage for $ty {
                 const BITS: u32 = <$ty>::BITS;
                 const ZERO: Self = 0;
+                #[inline(always)]
+                fn from_u128(v: u128) -> Self { v as $ty }
             }
         )*
     };
