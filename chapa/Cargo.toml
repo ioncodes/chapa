@@ -8,7 +8,7 @@ authors = ["Luca Marcelli <contact@layle.dev>"]
 repository = "https://github.com/ioncodes/chapa"
 homepage = "https://github.com/ioncodes/chapa"
 documentation = "https://docs.rs/chapa"
-keywords = ["bitfield", "bit-manipulation", "registers", "hardware", "msb0", "lsb0"]
+keywords = ["bitfield", "bit-manipulation", "msb0", "lsb0"]
 readme = "../README.md"
 
 [dependencies]
