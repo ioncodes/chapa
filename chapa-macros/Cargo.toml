@@ -2,6 +2,12 @@
 name = "chapa-macros"
 version = "0.1.0"
 edition = "2021"
+description = "Procedural macros for the chapa bitfield library"
+license = "MIT"
+authors = ["Luca Marcelli <contact@layle.dev>"]
+repository = "https://github.com/ioncodes/chapa"
+homepage = "https://github.com/ioncodes/chapa"
+documentation = "https://docs.rs/chapa-macros"
 
 [lib]
 proc-macro = true

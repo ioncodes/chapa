@@ -2,10 +2,17 @@
 name = "chapa"
 version = "0.1.0"
 edition = "2021"
-description = "Bitfield structs with MSB-0 and LSB-0 support"
+description = "Bitfield structs, batteries included!"
+license = "MIT"
+authors = ["Luca Marcelli <contact@layle.dev>"]
+repository = "https://github.com/ioncodes/chapa"
+homepage = "https://github.com/ioncodes/chapa"
+documentation = "https://docs.rs/chapa"
+keywords = ["bitfield", "bit-manipulation", "registers", "hardware", "msb0", "lsb0"]
+readme = "../README.md"
 
 [dependencies]
-chapa-macros = { path = "../chapa-macros" }
+chapa-macros = { version = "0.1", path = "../chapa-macros" }
 
 [dev-dependencies]
 trybuild = "1"
