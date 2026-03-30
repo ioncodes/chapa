@@ -365,6 +365,18 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             #[inline(always)]
             fn not(self) -> Self { Self(!self.0) }
         }
+        impl ::core::ops::BitAndAssign<#storage_ident> for #name {
+            #[inline(always)]
+            fn bitand_assign(&mut self, rhs: #storage_ident) { self.0 &= rhs; }
+        }
+        impl ::core::ops::BitOrAssign<#storage_ident> for #name {
+            #[inline(always)]
+            fn bitor_assign(&mut self, rhs: #storage_ident) { self.0 |= rhs; }
+        }
+        impl ::core::ops::BitXorAssign<#storage_ident> for #name {
+            #[inline(always)]
+            fn bitxor_assign(&mut self, rhs: #storage_ident) { self.0 ^= rhs; }
+        }
     };
 
     // Only emit a Debug impl when the user opted in with `#[derive(Debug)]`.

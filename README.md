@@ -14,7 +14,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
 - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
-- **Bitwise operators**: `&`, `|`, `^`, `!` with the backing storage type work directly on the struct
+- **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
 - **Bit extraction**: `extract_bits!` masks a value to keep only the specified bit ranges
 
 ## Installation
@@ -168,8 +168,8 @@ pub struct Instr {
 
 ## Bitwise operations
 
-Every bitfield struct implements `BitAnd`, `BitOr`, `BitXor`, and `Not` against
-its backing storage type.
+Every bitfield struct implements `BitAnd`, `BitOr`, `BitXor`, `Not`,
+`BitAndAssign`, `BitOrAssign`, and `BitXorAssign` against its backing storage type.
 
 ```rust
 use chapa::bitfield;
@@ -240,9 +240,12 @@ For a field `foo: u8` spanning bits `4..=7` the macro generates:
 
 Additionally, every struct implements the following traits:
 
-| Trait    | Signature                                   |
-| -------- | ------------------------------------------- |
-| `BitAnd` | `fn bitand(self, rhs: StorageType) -> Self` |
-| `BitOr`  | `fn bitor(self, rhs: StorageType) -> Self`  |
-| `BitXor` | `fn bitxor(self, rhs: StorageType) -> Self` |
-| `Not`    | `fn not(self) -> Self`                      |
+| Trait             | Signature                                            |
+| ----------------- | ---------------------------------------------------- |
+| `BitAnd`          | `fn bitand(self, rhs: StorageType) -> Self`          |
+| `BitOr`           | `fn bitor(self, rhs: StorageType) -> Self`           |
+| `BitXor`          | `fn bitxor(self, rhs: StorageType) -> Self`          |
+| `Not`             | `fn not(self) -> Self`                               |
+| `BitAndAssign`    | `fn bitand_assign(&mut self, rhs: StorageType)`      |
+| `BitOrAssign`     | `fn bitor_assign(&mut self, rhs: StorageType)`       |
+| `BitXorAssign`    | `fn bitxor_assign(&mut self, rhs: StorageType)`      |
