@@ -83,19 +83,22 @@
 //! ## Enum fields
 //!
 //! Use `#[derive(BitEnum)]` on an enum to automatically implement [`BitField`],
-//! allowing it to be used as a bitfield field type. `Copy` and `Clone` are derived
-//! automatically.
+//! allowing it to be used as a bitfield field type. The enum must also derive
+//! `Copy` + `Clone`, and mark exactly one variant `#[fallback]`.
 //!
-//! Note: Invalid raw values map to the last variant.
+//! `from_raw` coerces any unrecognized raw value to the `#[fallback]` variant;
+//! [`BitField::try_from_raw`] (or `TryFrom`) reports it as
+//! [`InvalidBitPattern`] instead.
 //!
 //! ```rust
 //! use chapa::{bitfield, BitEnum};
 //!
-//! #[derive(Debug, PartialEq, BitEnum)]
+//! #[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
 //! pub enum VideoFormat {
 //!     Ntsc = 0,
 //!     Pal = 1,
 //!     Mpal = 2,
+//!     #[fallback]
 //!     Debug = 3,
 //! }
 //!
@@ -270,11 +273,54 @@ pub trait BitField: Copy + Sized {
     const IS_MSB0: bool;
 
     /// Wraps a raw storage value in the bitfield newtype.
+    ///
+    /// This conversion is total: it never fails. Bitfield structs keep the raw
+    /// value verbatim; `#[derive(BitEnum)]` enums coerce any unrecognized value
+    /// to their `#[fallback]` variant. Use [`try_from_raw`](Self::try_from_raw)
+    /// when you need to reject values that match no variant.
     fn from_raw(raw: Self::Storage) -> Self;
+
+    /// Fallible counterpart to [`from_raw`](Self::from_raw).
+    ///
+    /// Returns [`InvalidBitPattern`] for storage values that match no variant.
+    /// Bitfield structs are total, so the default implementation always
+    /// succeeds; `#[derive(BitEnum)]` overrides it to validate the discriminant.
+    #[inline]
+    fn try_from_raw(raw: Self::Storage) -> Result<Self, InvalidBitPattern<Self::Storage>> {
+        Ok(Self::from_raw(raw))
+    }
 
     /// Returns the raw storage value.
     fn raw(&self) -> Self::Storage;
 }
+
+/// Error returned by [`BitField::try_from_raw`] and the `TryFrom` impl generated
+/// for `#[derive(BitEnum)]` enums when a raw storage value matches no variant.
+///
+/// Carries the offending value so callers can report or log it. It is a small
+/// `Copy` value type: converting a bad pattern allocates nothing and never
+/// unwinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidBitPattern<S> {
+    /// The raw value that matched no declared variant.
+    pub raw: S,
+}
+
+impl<S> InvalidBitPattern<S> {
+    /// Wraps a raw value that failed to match any variant.
+    #[inline]
+    pub const fn new(raw: S) -> Self {
+        Self { raw }
+    }
+}
+
+impl<S: core::fmt::Display> core::fmt::Display for InvalidBitPattern<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "raw value {} matches no enum variant", self.raw)
+    }
+}
+
+impl<S: core::fmt::Debug + core::fmt::Display> core::error::Error for InvalidBitPattern<S> {}
 
 // Blanket impls of BitStorage for every supported primitive integer.
 macro_rules! impl_bit_storage {

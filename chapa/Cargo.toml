@@ -1,6 +1,6 @@
 [package]
 name = "chapa"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "Bitfield structs, batteries included!"
 license = "MIT"
@@ -12,7 +12,7 @@ keywords = ["bitfield", "bit-manipulation", "msb0", "lsb0"]
 readme = "../README.md"
 
 [dependencies]
-chapa-macros = { version = "0.1", path = "../chapa-macros" }
+chapa-macros = { version = "0.2", path = "../chapa-macros" }
 
 [dev-dependencies]
 trybuild = "1"

@@ -147,8 +147,12 @@ fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
                         b.range.span,
                         format!(
                             "field `{}` (bits {}..={}) overlaps with `{}` (bits {}..={})",
-                            b.accessor_name, b.range.start, b.range.end,
-                            a.accessor_name, a.range.start, a.range.end,
+                            b.accessor_name,
+                            b.range.start,
+                            b.range.end,
+                            a.accessor_name,
+                            a.range.start,
+                            a.range.end,
                         ),
                     ));
                 }

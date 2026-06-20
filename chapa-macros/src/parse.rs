@@ -41,12 +41,7 @@ impl Parse for BitfieldArgs {
                     let bit_order = match val.to_string().as_str() {
                         "msb0" => BitOrder::Msb0,
                         "lsb0" => BitOrder::Lsb0,
-                        _ => {
-                            return Err(syn::Error::new(
-                                val.span(),
-                                "expected `msb0` or `lsb0`",
-                            ))
-                        }
+                        _ => return Err(syn::Error::new(val.span(), "expected `msb0` or `lsb0`")),
                     };
                     order = Some((bit_order, key.span()));
                 }
@@ -112,11 +107,7 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
             let end_lit: LitInt = input.parse()?;
             let end_val: u32 = end_lit.base10_parse()?;
             let end = if inclusive { end_val } else { end_val - 1 };
-            BitRange {
-                start,
-                end,
-                span,
-            }
+            BitRange { start, end, span }
         } else {
             // Single bit
             BitRange {
@@ -197,10 +188,7 @@ fn determine_field_type(ty: &syn::Type) -> FieldType {
 
 /// Parses the struct definition into a [`BitfieldDef`], resolving effective
 /// width and processing every field's `#[bits(...)]` annotation.
-pub fn parse_struct(
-    args: &BitfieldArgs,
-    item: &syn::ItemStruct,
-) -> syn::Result<BitfieldDef> {
+pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<BitfieldDef> {
     let effective_width = args.width.unwrap_or_else(|| args.storage.bit_width());
 
     let fields_named = match &item.fields {

@@ -69,7 +69,10 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         });
 
         let getter_name = format_ident!("{}", accessor);
-        let getter_doc = format!("Returns the `{}` field (bits {}..={}).", accessor, field.range.start, field.range.end);
+        let getter_doc = format!(
+            "Returns the `{}` field (bits {}..={}).",
+            accessor, field.range.start, field.range.end
+        );
         let field_width = phys.field_width;
 
         // Generate getter
@@ -82,8 +85,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 quote! { ((self.0 >> Self::#shift_name) & ((1 << #field_width) - 1)) as #field_ty }
             }
             FieldType::Nested(ty) => {
-                let nested_storage = StorageKind::smallest_fitting(field_width)
-                    .unwrap_or(StorageKind::U128);
+                let nested_storage =
+                    StorageKind::smallest_fitting(field_width).unwrap_or(StorageKind::U128);
                 let nested_storage_ident = format_ident!("{}", nested_storage.ident());
                 quote! {
                     let bits = ((self.0 >> Self::#shift_name) & ((1 << #field_width) - 1)) as #nested_storage_ident;
@@ -125,8 +128,14 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         if !field.readonly {
             let setter_name = format_ident!("set_{}", accessor);
             let with_name = format_ident!("with_{}", accessor);
-            let setter_doc = format!("Sets the `{}` field (bits {}..={}).", accessor, field.range.start, field.range.end);
-            let with_doc = format!("Returns a copy with the `{}` field set (bits {}..={}).", accessor, field.range.start, field.range.end);
+            let setter_doc = format!(
+                "Sets the `{}` field (bits {}..={}).",
+                accessor, field.range.start, field.range.end
+            );
+            let with_doc = format!(
+                "Returns a copy with the `{}` field set (bits {}..={}).",
+                accessor, field.range.start, field.range.end
+            );
 
             let param_ty = match &field.ty {
                 FieldType::Bool => quote! { bool },
@@ -221,8 +230,10 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 let alias_setter = format_ident!("set_{}", alias);
                 let alias_with = format_ident!("with_{}", alias);
                 let doc_alias = format!("Alias for [`{}`](Self::{}).", accessor, accessor);
-                let doc_alias_set = format!("Alias for [`set_{}`](Self::set_{}).", accessor, accessor);
-                let doc_alias_with = format!("Alias for [`with_{}`](Self::with_{}).", accessor, accessor);
+                let doc_alias_set =
+                    format!("Alias for [`set_{}`](Self::set_{}).", accessor, accessor);
+                let doc_alias_with =
+                    format!("Alias for [`with_{}`](Self::with_{}).", accessor, accessor);
 
                 let alias_getter_tokens = if matches!(field.ty, FieldType::Nested(_)) {
                     quote! {
@@ -382,11 +393,15 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     // Only emit a Debug impl when the user opted in with `#[derive(Debug)]`.
     let debug_impl = if user_derived_debug {
         let name_str = name.to_string();
-        let debug_fields: Vec<TokenStream> = def.fields.iter().map(|field| {
-            let getter = format_ident!("{}", field.accessor_name);
-            let field_str = &field.accessor_name;
-            quote! { .field(#field_str, &self.#getter()) }
-        }).collect();
+        let debug_fields: Vec<TokenStream> = def
+            .fields
+            .iter()
+            .map(|field| {
+                let getter = format_ident!("{}", field.accessor_name);
+                let field_str = &field.accessor_name;
+                quote! { .field(#field_str, &self.#getter()) }
+            })
+            .collect();
         quote! {
             impl ::core::fmt::Debug for #name {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {

@@ -42,8 +42,11 @@ fn bitfield_impl(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStrea
 
 /// Derive macro that implements `chapa::BitField` for C-like enums.
 ///
-/// Also auto-derives `Copy` and `Clone` (zero-cost for unit-variant enums).
-#[proc_macro_derive(BitEnum)]
+/// The enum must also derive `Copy` + `Clone` itself, and mark exactly one
+/// variant `#[fallback]`. That variant is returned by `from_raw` for any raw
+/// value matching no discriminant. Use `try_from_raw`/`TryFrom` to detect such
+/// values instead of coercing them.
+#[proc_macro_derive(BitEnum, attributes(fallback))]
 pub fn bit_enum(input: TokenStream) -> TokenStream {
     match bit_enum_impl(input) {
         Ok(ts) => ts,

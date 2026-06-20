@@ -1,10 +1,11 @@
 use chapa::{bitfield, BitEnum, BitField};
 
-#[derive(Debug, PartialEq, BitEnum)]
+#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
 pub enum VideoFormat {
     Ntsc = 0,
     Pal = 1,
     Mpal = 2,
+    #[fallback]
     Debug = 3,
 }
 
@@ -17,9 +18,27 @@ fn from_raw_valid() {
 }
 
 #[test]
-fn from_raw_invalid_uses_last_variant() {
+fn from_raw_invalid_uses_fallback() {
+    // `Debug` is marked `#[fallback]`, so unrecognized values coerce to it.
     assert_eq!(VideoFormat::from_raw(4), VideoFormat::Debug);
     assert_eq!(VideoFormat::from_raw(255), VideoFormat::Debug);
+}
+
+#[test]
+fn try_from_raw_reports_invalid() {
+    assert_eq!(VideoFormat::try_from_raw(2), Ok(VideoFormat::Mpal));
+    // Unlike `from_raw`, the fallback variant does not absorb bad values here.
+    assert_eq!(
+        VideoFormat::try_from_raw(4),
+        Err(chapa::InvalidBitPattern::new(4))
+    );
+    assert_eq!(VideoFormat::try_from_raw(4).unwrap_err().raw, 4);
+}
+
+#[test]
+fn try_from_trait() {
+    assert_eq!(VideoFormat::try_from(1u8), Ok(VideoFormat::Pal));
+    assert!(VideoFormat::try_from(7u8).is_err());
 }
 
 #[test]
@@ -39,10 +58,11 @@ fn storage_is_u8() {
     let _: u8 = VideoFormat::Ntsc.raw();
 }
 
-#[derive(Debug, PartialEq, BitEnum)]
+#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
 pub enum AutoDiscrim {
     A,
     B,
+    #[fallback]
     C,
 }
 
@@ -61,10 +81,11 @@ fn auto_discrim_from_raw() {
     assert_eq!(AutoDiscrim::from_raw(99), AutoDiscrim::C); // fallback
 }
 
-#[derive(Debug, PartialEq, BitEnum)]
+#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
 pub enum Sparse {
     Low = 0,
     Mid = 5,
+    #[fallback]
     High = 10,
 }
 

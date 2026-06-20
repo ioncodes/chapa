@@ -6,7 +6,13 @@ use syn::{spanned::Spanned, Data, DeriveInput, Expr, Fields, Lit};
 
 use crate::model::StorageKind;
 
-/// Generates `Copy`, `Clone`, and `BitField` impls for a C-like enum.
+/// Generates the `BitField` and `TryFrom` impls for a C-like enum.
+///
+/// The enum is expected to derive `Copy` + `Clone` itself (required by the
+/// `BitField: Copy` bound) and to mark exactly one variant `#[fallback]`. That
+/// variant is returned by `from_raw` for any storage value matching no
+/// discriminant; `try_from_raw`/`TryFrom` report such values as
+/// [`chapa::InvalidBitPattern`] instead of coercing them.
 pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
     let variants = match &input.data {
         Data::Enum(e) => &e.variants,
@@ -25,9 +31,10 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
         ));
     }
 
-    // Resolve discriminant values.
+    // Resolve discriminant values and locate the `#[fallback]` variant.
     let mut resolved: Vec<(&syn::Ident, u128)> = Vec::with_capacity(variants.len());
     let mut next_discrim: u128 = 0;
+    let mut fallback: Option<&syn::Ident> = None;
 
     for variant in variants {
         if !matches!(variant.fields, Fields::Unit) {
@@ -35,6 +42,20 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
                 variant,
                 "BitEnum only supports unit variants (no fields)",
             ));
+        }
+
+        if variant
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("fallback"))
+        {
+            if fallback.is_some() {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "BitEnum: only one variant may be marked #[fallback]",
+                ));
+            }
+            fallback = Some(&variant.ident);
         }
 
         let value = match &variant.discriminant {
@@ -46,11 +67,23 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
         next_discrim = value + 1;
     }
 
-    let max_val = resolved.iter().map(|(_, v)| *v).max().unwrap();
-    let bits_needed = if max_val == 0 { 1 } else { u128::BITS - max_val.leading_zeros() };
-    let storage = StorageKind::smallest_fitting(bits_needed).ok_or_else(|| {
-        syn::Error::new_spanned(&input.ident, "discriminant value exceeds u128")
+    let fallback = fallback.ok_or_else(|| {
+        syn::Error::new_spanned(
+            &input.ident,
+            "BitEnum requires exactly one variant marked #[fallback]; it is \
+             returned by `from_raw` for unrecognized values (use \
+             `try_from_raw`/`TryFrom` to detect them instead of coercing)",
+        )
     })?;
+
+    let max_val = resolved.iter().map(|(_, v)| *v).max().unwrap();
+    let bits_needed = if max_val == 0 {
+        1
+    } else {
+        u128::BITS - max_val.leading_zeros()
+    };
+    let storage = StorageKind::smallest_fitting(bits_needed)
+        .ok_or_else(|| syn::Error::new_spanned(&input.ident, "discriminant value exceeds u128"))?;
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -61,15 +94,12 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
         quote! { #lit => #name::#ident, }
     });
 
-    let last_variant = &resolved.last().unwrap().0;
+    let try_from_raw_arms = resolved.iter().map(|(ident, value)| {
+        let lit = syn::LitInt::new(&value.to_string(), ident.span());
+        quote! { #lit => ::core::result::Result::Ok(#name::#ident), }
+    });
 
     Ok(quote! {
-        impl #impl_generics ::core::marker::Copy for #name #ty_generics #where_clause {}
-        impl #impl_generics ::core::clone::Clone for #name #ty_generics #where_clause {
-            #[inline(always)]
-            fn clone(&self) -> Self { *self }
-        }
-
         impl #impl_generics ::chapa::BitField for #name #ty_generics #where_clause {
             type Storage = #storage_ident;
             // Enums have no bit ordering; IS_MSB0 is meaningless here but required by the trait.
@@ -79,13 +109,32 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
             fn from_raw(raw: #storage_ident) -> Self {
                 match raw {
                     #(#from_raw_arms)*
-                    _ => #name::#last_variant,
+                    _ => #name::#fallback,
+                }
+            }
+
+            #[inline(always)]
+            fn try_from_raw(
+                raw: #storage_ident,
+            ) -> ::core::result::Result<Self, ::chapa::InvalidBitPattern<#storage_ident>> {
+                match raw {
+                    #(#try_from_raw_arms)*
+                    other => ::core::result::Result::Err(::chapa::InvalidBitPattern::new(other)),
                 }
             }
 
             #[inline(always)]
             fn raw(&self) -> #storage_ident {
                 *self as #storage_ident
+            }
+        }
+
+        impl #impl_generics ::core::convert::TryFrom<#storage_ident> for #name #ty_generics #where_clause {
+            type Error = ::chapa::InvalidBitPattern<#storage_ident>;
+
+            #[inline(always)]
+            fn try_from(raw: #storage_ident) -> ::core::result::Result<Self, Self::Error> {
+                <Self as ::chapa::BitField>::try_from_raw(raw)
             }
         }
     })
@@ -96,9 +145,9 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
 fn parse_discriminant(expr: &Expr) -> syn::Result<u128> {
     match expr {
         Expr::Lit(lit) => match &lit.lit {
-            Lit::Int(int) => int.base10_parse::<u128>().map_err(|e| {
-                syn::Error::new(int.span(), format!("invalid discriminant: {e}"))
-            }),
+            Lit::Int(int) => int
+                .base10_parse::<u128>()
+                .map_err(|e| syn::Error::new(int.span(), format!("invalid discriminant: {e}"))),
             _ => Err(syn::Error::new(
                 lit.span(),
                 "BitEnum discriminants must be integer literals",

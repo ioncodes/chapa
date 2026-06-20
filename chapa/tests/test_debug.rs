@@ -4,9 +4,12 @@ use chapa::{bitfield, BitEnum};
 #[bitfield(u8, order = lsb0)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StatusReg {
-    #[bits(0)] enabled: bool,
-    #[bits(1..=3)] mode: u8,
-    #[bits(4..=7, readonly)] _reserved: u8,
+    #[bits(0)]
+    enabled: bool,
+    #[bits(1..=3)]
+    mode: u8,
+    #[bits(4..=7, readonly)]
+    _reserved: u8,
 }
 
 #[test]
@@ -16,11 +19,12 @@ fn debug_lsb0_struct() {
     assert_eq!(s, "StatusReg { enabled: true, mode: 5, reserved: 0 }");
 }
 
-#[derive(Debug, PartialEq, BitEnum)]
+#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
 pub enum Mode {
     Off = 0,
     On = 1,
     Turbo = 2,
+    #[fallback]
     Reserved = 3,
 }
 
@@ -28,8 +32,10 @@ pub enum Mode {
 #[bitfield(u8, order = lsb0)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CtrlReg {
-    #[bits(0..=1)] mode: Mode,
-    #[bits(2)] active: bool,
+    #[bits(0..=1)]
+    mode: Mode,
+    #[bits(2)]
+    active: bool,
 }
 
 #[test]
@@ -46,8 +52,10 @@ fn debug_enum_field() {
 #[bitfield(u8, order = lsb0)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FlagsReg {
-    #[bits(0)] flag_a: bool,
-    #[bits(1)] flag_b: bool,
+    #[bits(0)]
+    flag_a: bool,
+    #[bits(1)]
+    flag_b: bool,
 }
 
 #[test]

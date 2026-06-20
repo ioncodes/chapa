@@ -89,18 +89,19 @@ assert_eq!(cw.raw(), 0xA300_0000);
 
 ## Enum fields
 
-Use `#[derive(BitEnum)]` on an enum to automatically implement `BitField`,
-allowing it to be used as a bitfield field type. `Copy` and `Clone` are derived
-automatically.
+Use `#[derive(BitEnum)]` on an enum to implement `BitField`, allowing it to be
+used as a bitfield field type. The enum must also derive `Copy` + `Clone`
+itself and mark exactly one variant `#[fallback]`.
 
 ```rust
-use chapa::{bitfield, BitEnum};
+use chapa::{bitfield, BitEnum, BitField};
 
-#[derive(Debug, PartialEq, BitEnum)]
+#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
 pub enum VideoFormat {
     Ntsc = 0,
     Pal = 1,
     Mpal = 2,
+    #[fallback]
     Debug = 3,
 }
 
@@ -115,9 +116,14 @@ let dc = DisplayConfig::new()
     .with_enable(true)
     .with_fmt(VideoFormat::Pal);
 assert_eq!(dc.fmt(), VideoFormat::Pal);
-```
 
-Note: Invalid raw values map to the last variant!
+// Unrecognized raw values are handled two ways:
+//   - from_raw (and the getter dc.fmt()) coerce them to the #[fallback] variant
+//   - try_from_raw / TryFrom reject them, so corrupt input can be detected
+assert_eq!(VideoFormat::from_raw(9), VideoFormat::Debug);   // coerced to #[fallback]
+assert!(VideoFormat::try_from_raw(9).is_err());             // detected
+assert_eq!(VideoFormat::try_from(9u8).unwrap_err().raw, 9); // TryFrom<u8>
+```
 
 ## Nested bitfields
 

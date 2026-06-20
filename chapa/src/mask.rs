@@ -117,12 +117,12 @@ where
 /// assert_eq!(masked, 0xF00F);
 /// ```
 ///
-/// For chapa bitfield structs, the ordering and storage type can be omitted —
+/// For chapa bitfield structs, the ordering and storage type can be omitted;
 /// they are deduced from the struct's [`BitField::IS_MSB0`] constant.
 /// The result is the same struct type with the non-selected bits zeroed out.
 ///
 /// **Note on const:** The explicit (`msb0`/`lsb0`) form emits `const MASK: T = ...`,
-/// which is computed at compile time. The struct form calls an [`#[inline]`](inline) helper; 
+/// which is computed at compile time. The struct form calls an [`#[inline]`](inline) helper;
 /// LLVM will constant-fold the mask in optimized builds but there is no language-level `const` guarantee.
 ///
 /// ```ignore
