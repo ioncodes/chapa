@@ -29,6 +29,9 @@ pub fn validate(def: &BitfieldDef) -> syn::Result<()> {
     for e in validate_aliases(def) {
         push_err(e);
     }
+    for e in validate_defaults(def) {
+        push_err(e);
+    }
 
     match errors {
         Some(e) => Err(e),
@@ -188,6 +191,28 @@ fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
         }
     }
     errs
+}
+
+/// Checks that `default = ...` only appears when the struct `#[derive(Default)]`s,
+/// since the value is applied solely through the generated `Default` impl.
+fn validate_defaults(def: &BitfieldDef) -> Vec<syn::Error> {
+    if def.derives_default {
+        return Vec::new();
+    }
+    def.fields
+        .iter()
+        .filter_map(|f| f.default.as_ref().map(|d| (f, d)))
+        .map(|(f, default)| {
+            syn::Error::new_spanned(
+                default,
+                format!(
+                    "field `{}` has a `default` but the struct does not `#[derive(Default)]`; \
+                     the value is only applied by `Default::default()`",
+                    f.accessor_name
+                ),
+            )
+        })
+        .collect()
 }
 
 /// Checks that no two fields (including their aliases) expose the same accessor name.

@@ -2,6 +2,7 @@
 name = "chapa-macros"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.83"
 description = "Procedural macros for the chapa bitfield library"
 license = "MIT"
 authors = ["Luca Marcelli <contact@layle.dev>"]

@@ -2,6 +2,7 @@
 name = "chapa"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.83"
 description = "Bitfield structs, batteries included!"
 license = "MIT"
 authors = ["Luca Marcelli <contact@layle.dev>"]

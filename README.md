@@ -12,6 +12,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
 - **Nested bitfields**: Embed one bitfield struct inside another
 - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
+- **Default values**: Give fields a `default = ...` and `#[derive(Default)]` to bake them in
 - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
@@ -23,6 +24,9 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 [dependencies]
 chapa = { git = "http://github.com/ioncodes/chapa" }
 ```
+
+Requires Rust 1.83 or newer (the generated getters, setters, and `with_*`
+builders are `const fn`).
 
 ## Quick start
 
@@ -38,7 +42,7 @@ pub struct StatusReg {
     #[bits(4..=7)] _reserved: u8 // Can be ommited; "_" makes it readonly
 }
 
-let r = StatusReg::new()
+let r = StatusReg::zero()
     .with_enabled(true)
     .with_mode(5);
 
@@ -63,6 +67,7 @@ assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 | `N..=M`             | Inclusive range from bit N to bit M               |
 | `N..M`              | Half-open range (equivalent to `N..=(M-1)`)       |
 | `readonly`          | Suppress `set_*` and `with_*` generation          |
+| `default = <expr>`  | Starting value applied by `default()`             |
 | `alias = "name"`    | Generate additional accessor under `name`         |
 | `alias = ["a","b"]` | Multiple aliases                                  |
 | `overlay = "group"` | Allow overlap with fields in other overlay groups |
@@ -81,7 +86,7 @@ pub struct ControlWord {
     #[bits(8..=31, readonly)] payload: u32,
 }
 
-let cw = ControlWord::new()
+let cw = ControlWord::zero()
   .with_opcode(0xA)
   .with_dst(0x3);
 assert_eq!(cw.raw(), 0xA300_0000);
@@ -112,7 +117,7 @@ pub struct DisplayConfig {
     #[bits(1..=2)] fmt: VideoFormat,
 }
 
-let dc = DisplayConfig::new()
+let dc = DisplayConfig::zero()
     .with_enable(true)
     .with_fmt(VideoFormat::Pal);
 assert_eq!(dc.fmt(), VideoFormat::Pal);
@@ -172,6 +177,40 @@ pub struct Instr {
 }
 ```
 
+## Constructors and default values
+
+Every struct gets a `const fn zero()` that returns an all-zero instance. There
+is no `new()`. To give a field its own starting value, add `default = <expr>` and
+`#[derive(Default)]`; the generated `default()` applies those values, while
+`zero()` and `from_raw` always ignore them.
+
+`default` works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum,
+or nested bitfield, e.g. `default = Mode::On`), including `readonly` ones.
+Values wider than the field truncate to its width, exactly like a setter.
+Declaring a `default` without `#[derive(Default)]` is a compile error, since the
+value would otherwise never be applied.
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub struct Config {
+    #[bits(0)] enabled: bool,
+    #[bits(1..=3, default = 5)] mode: u8,
+    #[bits(8, default = true)] ready: bool,
+}
+
+let c = Config::default();
+assert_eq!(c.mode(), 5);
+assert_eq!(c.ready(), true);
+assert_eq!(c.enabled(), false);   // no default -> zero
+
+// zero() and from_raw never inject defaults
+assert_eq!(Config::zero().mode(), 0);
+assert_eq!(Config::from_raw(0).mode(), 0);
+```
+
 ## Bitwise operations
 
 Every bitfield struct implements `BitAnd`, `BitOr`, `BitXor`, `Not`,
@@ -190,7 +229,7 @@ pub struct Msr {
 const RESTORE_MASK: u32 = 0x0000_FF73;
 
 let srr1: u32 = 0x0000_8000;
-let msr = Msr::new();
+let msr = Msr::zero();
 
 // No .raw() / from_raw() needed:
 let updated = (msr & !RESTORE_MASK) | (srr1 & RESTORE_MASK);
@@ -241,7 +280,7 @@ For a field `foo: u8` spanning bits `4..=7` the macro generates:
 | Constant | `pub const FOO_SHIFT: u32`                     |
 | Constant | `pub const FOO_MASK: StorageType`              |
 | Getter   | `pub const fn foo(&self) -> u8`                |
-| Setter   | `pub fn set_foo(&mut self, val: u8)`           |
+| Setter   | `pub const fn set_foo(&mut self, val: u8)`     |
 | Builder  | `pub const fn with_foo(self, val: u8) -> Self` |
 
 Additionally, every struct implements the following traits:

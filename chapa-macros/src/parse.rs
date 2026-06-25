@@ -1,6 +1,7 @@
 //! Parsing logic for the `#[bitfield]` attribute and `#[bits(...)]` field annotations.
 
 use proc_macro2::Span;
+use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Ident, LitInt, Token};
@@ -80,12 +81,14 @@ struct BitsAttr {
     readonly: bool,
     aliases: Vec<String>,
     overlay: Option<String>,
+    default: Option<syn::Expr>,
 }
 
 fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
     let mut readonly = false;
     let mut aliases = Vec::new();
     let mut overlay = None;
+    let mut default = None;
 
     // Parse the range part. Could be:
     // - single literal: `5`
@@ -154,6 +157,12 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
                 let lit: syn::LitStr = input.parse()?;
                 overlay = Some(lit.value());
             }
+            "default" => {
+                input.parse::<Token![=]>()?;
+                // A full expression; parsing stops at the next top-level comma.
+                let expr: syn::Expr = input.parse()?;
+                default = Some(expr);
+            }
             _ => {
                 return Err(syn::Error::new(
                     key.span(),
@@ -168,6 +177,7 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
         readonly,
         aliases,
         overlay,
+        default,
     })
 }
 
@@ -236,17 +246,42 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
             readonly,
             aliases: parsed.aliases,
             overlay: parsed.overlay,
+            default: parsed.default,
             span: field_name.span(),
         });
     }
 
-    // Collect user attrs (exclude bitfield)
-    let user_attrs: Vec<syn::Attribute> = item
-        .attrs
-        .iter()
-        .filter(|a| !a.path().is_ident("bitfield"))
-        .cloned()
-        .collect();
+    // In a single pass over the struct attributes, record which derives the macro
+    // intercepts (`Debug`/`Default`, matched as bare paths) and collect the rest to
+    // forward to the generated struct. Intercepted derives are stripped from each
+    // `#[derive(...)]` list; a list left empty is dropped. `#[bitfield]` itself is
+    // never forwarded.
+    let mut derives_debug = false;
+    let mut derives_default = false;
+    let mut user_attrs: Vec<proc_macro2::TokenStream> = Vec::new();
+    for attr in &item.attrs {
+        if attr.path().is_ident("bitfield") {
+            continue;
+        }
+        if attr.path().is_ident("derive") {
+            let mut kept: Vec<syn::Path> = Vec::new();
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("Debug") {
+                    derives_debug = true;
+                } else if meta.path.is_ident("Default") {
+                    derives_default = true;
+                } else {
+                    kept.push(meta.path.clone());
+                }
+                Ok(())
+            });
+            if !kept.is_empty() {
+                user_attrs.push(quote! { #[derive(#(#kept),*)] });
+            }
+        } else {
+            user_attrs.push(quote! { #attr });
+        }
+    }
 
     Ok(BitfieldDef {
         args: args.clone(),
@@ -254,6 +289,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
         fields: field_defs,
         vis: item.vis.clone(),
         name: item.ident.clone(),
+        derives_debug,
+        derives_default,
         user_attrs,
     })
 }

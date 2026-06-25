@@ -12,6 +12,7 @@
 //! - **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
 //! - **Nested bitfields**: Embed one bitfield struct inside another
 //! - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
+//! - **Default values**: Give fields a `default = ...` and `#[derive(Default)]` to bake them in
 //! - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 //! - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 //! - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
@@ -31,7 +32,7 @@
 //!     #[bits(4..=7)] _reserved: u8, // Can be omitted; "_" makes it readonly
 //! }
 //!
-//! let r = StatusReg::new()
+//! let r = StatusReg::zero()
 //!     .with_enabled(true)
 //!     .with_mode(5);
 //!
@@ -56,6 +57,7 @@
 //! | `N..=M` | Inclusive range from bit N to bit M |
 //! | `N..M` | Half-open range (equivalent to `N..=(M-1)`) |
 //! | `readonly` | Suppress `set_*` and `with_*` generation |
+//! | `default = <expr>` | Starting value applied by `default()` |
 //! | `alias = "name"` | Generate additional accessor under `name` |
 //! | `alias = ["a","b"]` | Multiple aliases |
 //! | `overlay = "group"` | Allow overlap with fields in other overlay groups |
@@ -74,7 +76,7 @@
 //!     #[bits(8..=31, readonly)] payload: u32,
 //! }
 //!
-//! let cw = ControlWord::new()
+//! let cw = ControlWord::zero()
 //!     .with_opcode(0xA)
 //!     .with_dst(0x3);
 //! assert_eq!(cw.raw(), 0xA300_0000);
@@ -109,7 +111,7 @@
 //!     #[bits(1..=2)] fmt: VideoFormat,
 //! }
 //!
-//! let dc = DisplayConfig::new()
+//! let dc = DisplayConfig::zero()
 //!     .with_enable(true)
 //!     .with_fmt(VideoFormat::Pal);
 //! assert_eq!(dc.fmt(), VideoFormat::Pal);
@@ -162,6 +164,38 @@
 //! }
 //! ```
 //!
+//! ## Constructors and default values
+//!
+//! Every struct gets a `const fn zero()` returning an all-zero instance. There
+//! is no `new()`. To give a field its own starting value, add `default = <expr>`
+//! and `#[derive(Default)]`: the generated `default()` applies those values,
+//! while `zero()` and `from_raw` always ignore them.
+//!
+//! Works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum, or
+//! nested bitfield, e.g. `default = Mode::On`), including `readonly` ones;
+//! values wider than the field truncate to its width, like a setter. A `default`
+//! without `#[derive(Default)]` is a compile error, since it would never apply.
+//!
+//! ```rust
+//! use chapa::bitfield;
+//!
+//! #[bitfield(u16, order = lsb0)]
+//! #[derive(Copy, Clone, Debug, PartialEq, Default)]
+//! pub struct Config {
+//!     #[bits(0)] enabled: bool,
+//!     #[bits(1..=3, default = 5)] mode: u8,
+//!     #[bits(8, default = true)] ready: bool,
+//! }
+//!
+//! let c = Config::default();
+//! assert_eq!(c.mode(), 5);
+//! assert_eq!(c.ready(), true);
+//! assert_eq!(c.enabled(), false); // no default -> zero
+//! // zero() and from_raw never inject defaults
+//! assert_eq!(Config::zero().mode(), 0);
+//! assert_eq!(Config::from_raw(0).mode(), 0);
+//! ```
+//!
 //! ## Bitwise operations
 //!
 //! Every bitfield struct implements [`BitAnd`](core::ops::BitAnd),
@@ -181,7 +215,7 @@
 //! }
 //!
 //! const MASK: u32 = 0x0000_00FF;
-//! let a = StatusReg::new().with_enabled(true);
+//! let a = StatusReg::zero().with_enabled(true);
 //! let b: u32 = 0x0000_00AA;
 //!
 //! let result = (a & !MASK) | (b & MASK); // result: StatusReg
@@ -221,7 +255,7 @@
 //! | Constant | `pub const FOO_SHIFT: u32` |
 //! | Constant | `pub const FOO_MASK: StorageType` |
 //! | Getter | `pub const fn foo(&self) -> u8` |
-//! | Setter | `pub fn set_foo(&mut self, val: u8)` |
+//! | Setter | `pub const fn set_foo(&mut self, val: u8)` |
 //! | Builder | `pub const fn with_foo(self, val: u8) -> Self` |
 //!
 //! Additionally, every struct implements the following traits:

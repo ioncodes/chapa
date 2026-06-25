@@ -12,7 +12,7 @@ pub struct MsbReg {
 #[test]
 fn msb0_high_field() {
     // MSB-0: bits 0..=3 -> physical shift 28, mask 0xF0000000
-    let r = MsbReg::new().with_high(0xA);
+    let r = MsbReg::zero().with_high(0xA);
     assert_eq!(r.raw(), 0xA000_0000);
     assert_eq!(r.high(), 0xA);
 }
@@ -20,14 +20,14 @@ fn msb0_high_field() {
 #[test]
 fn msb0_low_field() {
     // MSB-0: bits 28..=31 -> physical shift 0, mask 0x0000000F
-    let r = MsbReg::new().with_low(0x5);
+    let r = MsbReg::zero().with_low(0x5);
     assert_eq!(r.raw(), 0x0000_0005);
     assert_eq!(r.low(), 0x5);
 }
 
 #[test]
 fn msb0_round_trip() {
-    let r = MsbReg::new().with_high(0xC).with_low(0x3);
+    let r = MsbReg::zero().with_high(0xC).with_low(0x3);
     assert_eq!(r.raw(), 0xC000_0003);
     assert_eq!(r.high(), 0xC);
     assert_eq!(r.low(), 0x3);

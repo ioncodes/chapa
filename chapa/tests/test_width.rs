@@ -14,20 +14,20 @@ pub struct Nibble {
 #[test]
 fn width4_bit0_is_msb() {
     // MSB-0 width=4: bit 0 -> shift 3, mask 0x08
-    let r = Nibble::new().with_bit0(true);
+    let r = Nibble::zero().with_bit0(true);
     assert_eq!(r.raw(), 0x08);
 }
 
 #[test]
 fn width4_bit3_is_lsb() {
     // MSB-0 width=4: bit 3 -> shift 0, mask 0x01
-    let r = Nibble::new().with_bit3(true);
+    let r = Nibble::zero().with_bit3(true);
     assert_eq!(r.raw(), 0x01);
 }
 
 #[test]
 fn width4_mid() {
-    let r = Nibble::new().with_mid(3);
+    let r = Nibble::zero().with_mid(3);
     // bits 1..=2, MSB-0 width=4: shift 1, mask 0x06
     assert_eq!(r.raw(), 0x06);
     assert_eq!(r.mid(), 3);

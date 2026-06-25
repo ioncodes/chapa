@@ -11,13 +11,13 @@ pub struct StatusReg {
 
 #[test]
 fn new_is_zero() {
-    let r = StatusReg::new();
+    let r = StatusReg::zero();
     assert_eq!(r.raw(), 0);
 }
 
 #[test]
 fn with_low_nibble() {
-    let r = StatusReg::new().with_low_nibble(0xA);
+    let r = StatusReg::zero().with_low_nibble(0xA);
     assert_eq!(r.raw(), 0x000A);
     assert_eq!(r.low_nibble(), 0xA);
     assert_eq!(r.high_nibble(), 0);
@@ -25,7 +25,7 @@ fn with_low_nibble() {
 
 #[test]
 fn with_high_nibble() {
-    let r = StatusReg::new().with_high_nibble(0xB);
+    let r = StatusReg::zero().with_high_nibble(0xB);
     assert_eq!(r.raw(), 0xB000);
     assert_eq!(r.high_nibble(), 0xB);
     assert_eq!(r.low_nibble(), 0);
@@ -33,7 +33,7 @@ fn with_high_nibble() {
 
 #[test]
 fn round_trip() {
-    let r = StatusReg::new().with_low_nibble(0x5).with_high_nibble(0xC);
+    let r = StatusReg::zero().with_low_nibble(0x5).with_high_nibble(0xC);
     assert_eq!(r.raw(), 0xC005);
     assert_eq!(r.low_nibble(), 0x5);
     assert_eq!(r.high_nibble(), 0xC);
@@ -48,7 +48,7 @@ fn from_raw() {
 
 #[test]
 fn set_mutate() {
-    let mut r = StatusReg::new();
+    let mut r = StatusReg::zero();
     r.set_low_nibble(3);
     r.set_high_nibble(7);
     assert_eq!(r.low_nibble(), 3);

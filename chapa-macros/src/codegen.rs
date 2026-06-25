@@ -15,7 +15,7 @@ use crate::ordering;
 /// Emits:
 /// - A `#[repr(transparent)]` newtype wrapping the storage type.
 /// - `{FIELD}_SHIFT` and `{FIELD}_MASK` associated constants for every field.
-/// - `new()`, `from_raw()`, and `raw()` inherent methods.
+/// - `zero()`, `from_raw()`, and `raw()` inherent methods.
 /// - `field()` getter, `set_field()` setter, and `with_field()` builder for each
 ///   non-readonly field; only the getter for readonly fields.
 /// - Alias methods for every `alias = ...` annotation.
@@ -25,9 +25,13 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     let name = &def.name;
     let storage_ident = format_ident!("{}", def.args.storage.ident());
 
-    // If the user wrote `#[derive(Debug)]`, strip it and generate our own impl.
-    // If they didn't, no Debug impl is emitted at all.
-    let (user_derived_debug, filtered_attrs) = strip_debug_derive(&def.user_attrs);
+    // The user's `#[derive(Debug)]` / `#[derive(Default)]` are intercepted in
+    // `parse`: these flags drive our own impls (below), and `def.user_attrs` is
+    // the forwarded attribute list with those derives already removed. If a flag
+    // is unset, the corresponding impl is not emitted.
+    let user_derived_debug = def.derives_debug;
+    let user_derived_default = def.derives_default;
+    let filtered_attrs = &def.user_attrs;
 
     // Generate struct
     let struct_def = quote! {
@@ -40,6 +44,9 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     // Generate associated consts and methods
     let mut consts = Vec::new();
     let mut methods = Vec::new();
+    // Per-field `default = ...` contributions, OR'd together inside the generated
+    // `Default::default()`.
+    let mut default_contribs = Vec::new();
 
     for field in &def.fields {
         let phys = ordering::compute(def.args.order, &field.range, def.effective_width);
@@ -67,6 +74,34 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             #maybe_allow_dead_code
             #vis const #mask_name: #storage_ident = #mask_literal;
         });
+
+        // `const fn` is possible only when packing/unpacking this field is const.
+        // Nested and enum fields go through `BitField::raw`/`from_raw`, which are
+        // not const, so their accessors are emitted without `const`.
+        let maybe_const = if matches!(field.ty, FieldType::Nested(_)) {
+            quote! {}
+        } else {
+            quote! { const }
+        };
+
+        // The contribution of `value` to the storage: shifted and masked into this
+        // field's bits, truncating anything too wide. Shared by the setter, the
+        // `with_*` builder, and the `default = ...` initializer so the packing
+        // logic lives in exactly one place.
+        let insert = |value: &TokenStream| match &field.ty {
+            FieldType::Bool => quote! { (if #value { Self::#mask_name } else { 0 }) },
+            FieldType::Primitive(_) => {
+                quote! { (((#value as #storage_ident) << Self::#shift_name) & Self::#mask_name) }
+            }
+            FieldType::Nested(ty) => quote! {
+                (((<#ty as ::chapa::BitField>::raw(&(#value)) as #storage_ident) << Self::#shift_name) & Self::#mask_name)
+            },
+        };
+
+        // Fold a `default = ...` value into the bits produced by `Default::default()`.
+        if let Some(default_expr) = &field.default {
+            default_contribs.push(insert(&quote! { (#default_expr) }));
+        }
 
         let getter_name = format_ident!("{}", accessor);
         let getter_doc = format!(
@@ -104,25 +139,13 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             FieldType::Nested(ty) => quote! { #ty },
         };
 
-        // Nested-type getters call BitField::from_raw which is not const.
-        let getter_tokens = if matches!(field.ty, FieldType::Nested(_)) {
-            quote! {
-                #[doc = #getter_doc]
-                #[inline(always)]
-                #vis fn #getter_name(&self) -> #return_ty {
-                    #getter_body
-                }
+        methods.push(quote! {
+            #[doc = #getter_doc]
+            #[inline(always)]
+            #vis #maybe_const fn #getter_name(&self) -> #return_ty {
+                #getter_body
             }
-        } else {
-            quote! {
-                #[doc = #getter_doc]
-                #[inline(always)]
-                #vis const fn #getter_name(&self) -> #return_ty {
-                    #getter_body
-                }
-            }
-        };
-        methods.push(getter_tokens);
+        });
 
         // Generate setter and with_* (unless readonly)
         if !field.readonly {
@@ -146,83 +169,30 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 FieldType::Nested(ty) => quote! { #ty },
             };
 
-            let setter_body = match &field.ty {
-                FieldType::Bool => {
-                    quote! {
-                        if val {
-                            self.0 |= Self::#mask_name;
-                        } else {
-                            self.0 &= !Self::#mask_name;
-                        }
-                    }
-                }
-                FieldType::Primitive(_) => {
-                    quote! {
-                        self.0 = (self.0 & !Self::#mask_name) | (((val as #storage_ident) << Self::#shift_name) & Self::#mask_name);
-                    }
-                }
-                FieldType::Nested(ty) => {
-                    quote! {
-                        let raw = <#ty as ::chapa::BitField>::raw(&val) as #storage_ident;
-                        self.0 = (self.0 & !Self::#mask_name) | ((raw << Self::#shift_name) & Self::#mask_name);
-                    }
-                }
-            };
-
-            let with_body = match &field.ty {
-                FieldType::Bool => {
-                    quote! {
-                        if val {
-                            self.0 |= Self::#mask_name;
-                        } else {
-                            self.0 &= !Self::#mask_name;
-                        }
-                    }
-                }
-                FieldType::Primitive(_) => {
-                    quote! {
-                        self.0 = (self.0 & !Self::#mask_name) | (((val as #storage_ident) << Self::#shift_name) & Self::#mask_name);
-                    }
-                }
-                FieldType::Nested(ty) => {
-                    quote! {
-                        let raw = <#ty as ::chapa::BitField>::raw(&val) as #storage_ident;
-                        self.0 = (self.0 & !Self::#mask_name) | ((raw << Self::#shift_name) & Self::#mask_name);
-                    }
-                }
+            // Both the setter and the `with_*` builder clear the field's bits and
+            // OR in the new value; `const` is gated on the field type (see above).
+            let value = insert(&quote! { val });
+            let mutate_body = quote! {
+                self.0 = (self.0 & !Self::#mask_name) | #value;
             };
 
             methods.push(quote! {
                 #[doc = #setter_doc]
                 #[inline(always)]
-                #vis fn #setter_name(&mut self, val: #param_ty) {
-                    #setter_body
+                #vis #maybe_const fn #setter_name(&mut self, val: #param_ty) {
+                    #mutate_body
                 }
             });
 
-            // Nested with_* calls BitField::raw which is not const.
-            let with_tokens = if matches!(field.ty, FieldType::Nested(_)) {
-                quote! {
-                    #[doc = #with_doc]
-                    #[inline(always)]
-                    #[must_use]
-                    #vis fn #with_name(mut self, val: #param_ty) -> Self {
-                        #with_body
-                        self
-                    }
+            methods.push(quote! {
+                #[doc = #with_doc]
+                #[inline(always)]
+                #[must_use]
+                #vis #maybe_const fn #with_name(mut self, val: #param_ty) -> Self {
+                    #mutate_body
+                    self
                 }
-            } else {
-                quote! {
-                    #[doc = #with_doc]
-                    #[inline(always)]
-                    #[must_use]
-                    #vis const fn #with_name(mut self, val: #param_ty) -> Self {
-                        #with_body
-                        self
-                    }
-                }
-            };
-            methods.push(with_tokens);
+            });
 
             // Generate aliases
             for alias in &field.aliases {
@@ -235,58 +205,33 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 let doc_alias_with =
                     format!("Alias for [`with_{}`](Self::with_{}).", accessor, accessor);
 
-                let alias_getter_tokens = if matches!(field.ty, FieldType::Nested(_)) {
-                    quote! {
-                        #[doc = #doc_alias]
-                        #[doc(alias = #accessor)]
-                        #[inline(always)]
-                        #vis fn #alias_getter(&self) -> #return_ty {
-                            self.#getter_name()
-                        }
+                methods.push(quote! {
+                    #[doc = #doc_alias]
+                    #[doc(alias = #accessor)]
+                    #[inline(always)]
+                    #vis #maybe_const fn #alias_getter(&self) -> #return_ty {
+                        self.#getter_name()
                     }
-                } else {
-                    quote! {
-                        #[doc = #doc_alias]
-                        #[doc(alias = #accessor)]
-                        #[inline(always)]
-                        #vis const fn #alias_getter(&self) -> #return_ty {
-                            self.#getter_name()
-                        }
-                    }
-                };
-                methods.push(alias_getter_tokens);
+                });
 
                 methods.push(quote! {
                     #[doc = #doc_alias_set]
                     #[doc(alias = #accessor)]
                     #[inline(always)]
-                    #vis fn #alias_setter(&mut self, val: #param_ty) {
+                    #vis #maybe_const fn #alias_setter(&mut self, val: #param_ty) {
                         self.#setter_name(val)
                     }
                 });
 
-                let alias_with_tokens = if matches!(field.ty, FieldType::Nested(_)) {
-                    quote! {
-                        #[doc = #doc_alias_with]
-                        #[doc(alias = #accessor)]
-                        #[inline(always)]
-                        #[must_use]
-                        #vis fn #alias_with(self, val: #param_ty) -> Self {
-                            self.#with_name(val)
-                        }
+                methods.push(quote! {
+                    #[doc = #doc_alias_with]
+                    #[doc(alias = #accessor)]
+                    #[inline(always)]
+                    #[must_use]
+                    #vis #maybe_const fn #alias_with(self, val: #param_ty) -> Self {
+                        self.#with_name(val)
                     }
-                } else {
-                    quote! {
-                        #[doc = #doc_alias_with]
-                        #[doc(alias = #accessor)]
-                        #[inline(always)]
-                        #[must_use]
-                        #vis const fn #alias_with(self, val: #param_ty) -> Self {
-                            self.#with_name(val)
-                        }
-                    }
-                };
-                methods.push(alias_with_tokens);
+                });
             }
         } else {
             // Readonly aliases: only getter
@@ -294,26 +239,14 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 let alias_getter = format_ident!("{}", alias);
                 let doc_alias = format!("Alias for [`{}`](Self::{}).", accessor, accessor);
 
-                let alias_getter_tokens = if matches!(field.ty, FieldType::Nested(_)) {
-                    quote! {
-                        #[doc = #doc_alias]
-                        #[doc(alias = #accessor)]
-                        #[inline(always)]
-                        #vis fn #alias_getter(&self) -> #return_ty {
-                            self.#getter_name()
-                        }
+                methods.push(quote! {
+                    #[doc = #doc_alias]
+                    #[doc(alias = #accessor)]
+                    #[inline(always)]
+                    #vis #maybe_const fn #alias_getter(&self) -> #return_ty {
+                        self.#getter_name()
                     }
-                } else {
-                    quote! {
-                        #[doc = #doc_alias]
-                        #[doc(alias = #accessor)]
-                        #[inline(always)]
-                        #vis const fn #alias_getter(&self) -> #return_ty {
-                            self.#getter_name()
-                        }
-                    }
-                };
-                methods.push(alias_getter_tokens);
+                });
             }
         }
     }
@@ -390,6 +323,23 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         }
     };
 
+    // Only emit a Default impl when the user opted in with `#[derive(Default)]`.
+    // It applies every field's `default = ...` value; with no defaults declared it
+    // is equivalent to `zero()`. The stock derive on the newtype would ignore the
+    // field defaults entirely, which is why it is intercepted.
+    let default_impl = if user_derived_default {
+        quote! {
+            impl ::core::default::Default for #name {
+                #[inline(always)]
+                fn default() -> Self {
+                    Self(0 #( | #default_contribs )*)
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     // Only emit a Debug impl when the user opted in with `#[derive(Debug)]`.
     let debug_impl = if user_derived_debug {
         let name_str = name.to_string();
@@ -421,9 +371,12 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         impl #name {
             #(#consts)*
 
-            /// Creates a new instance with all bits set to zero.
+            /// Creates an instance with all bits set to zero.
+            ///
+            /// Field `default = ...` values are applied by `Default::default`
+            /// (when `#[derive(Default)]` is present), not here.
             #[inline(always)]
-            #vis const fn new() -> Self {
+            #vis const fn zero() -> Self {
                 Self(0)
             }
 
@@ -446,37 +399,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         #from_impls
         #ops_impls
         #debug_impl
+        #default_impl
     }
-}
-
-/// Strips `Debug` from `#[derive(...)]` attribute lists so the macro can
-/// provide its own `core::fmt::Debug` implementation instead.
-///
-/// Returns `(found, filtered_attrs)` where `found` is `true` when `Debug` was
-/// present in at least one derive list. Derive attributes that become empty
-/// after removing `Debug` are dropped entirely.
-fn strip_debug_derive(attrs: &[syn::Attribute]) -> (bool, Vec<proc_macro2::TokenStream>) {
-    let mut result = Vec::new();
-    let mut found = false;
-    for attr in attrs {
-        if attr.path().is_ident("derive") {
-            let mut paths: Vec<syn::Path> = Vec::new();
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("Debug") {
-                    found = true;
-                } else {
-                    paths.push(meta.path.clone());
-                }
-                Ok(())
-            });
-            if !paths.is_empty() {
-                result.push(quote! { #[derive(#(#paths),*)] });
-            }
-        } else {
-            result.push(quote! { #attr });
-        }
-    }
-    (found, result)
 }
 
 /// Converts a `u128` mask value to a correctly-typed token literal for the

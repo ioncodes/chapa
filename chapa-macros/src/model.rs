@@ -144,6 +144,11 @@ pub struct FieldDef {
     pub aliases: Vec<String>,
     /// Overlay group name declared with `overlay = "..."`, if any.
     pub overlay: Option<String>,
+    /// Default value expression declared with `default = ...`, if any.
+    ///
+    /// Applied by the generated `Default::default()`, which requires the struct to
+    /// `#[derive(Default)]`. Supported on any field type.
+    pub default: Option<syn::Expr>,
     /// Source span of the field identifier (for error reporting).
     pub span: Span,
 }
@@ -161,6 +166,11 @@ pub struct BitfieldDef {
     pub vis: syn::Visibility,
     /// Name of the original struct.
     pub name: syn::Ident,
-    /// Non-`#[bitfield]` attributes forwarded to the generated struct.
-    pub user_attrs: Vec<syn::Attribute>,
+    /// Non-`#[bitfield]` attributes forwarded to the generated struct, with the
+    /// macro-intercepted derives (`Debug`, `Default`) already removed.
+    pub user_attrs: Vec<proc_macro2::TokenStream>,
+    /// Whether the struct's derive list contained `Debug` (intercepted).
+    pub derives_debug: bool,
+    /// Whether the struct's derive list contained `Default` (intercepted).
+    pub derives_default: bool,
 }

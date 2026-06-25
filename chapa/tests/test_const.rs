@@ -11,7 +11,7 @@ pub struct ConstReg {
 
 #[test]
 fn const_new() {
-    const R: ConstReg = ConstReg::new();
+    const R: ConstReg = ConstReg::zero();
     assert_eq!(R.raw(), 0);
 }
 
@@ -23,7 +23,7 @@ fn const_from_raw() {
 
 #[test]
 fn const_with() {
-    const R: ConstReg = ConstReg::new().with_low(0x12).with_high(0x34);
+    const R: ConstReg = ConstReg::zero().with_low(0x12).with_high(0x34);
     assert_eq!(R.raw(), 0x3412);
 }
 
@@ -34,4 +34,15 @@ fn const_getter() {
     const HIGH: u8 = R.high();
     assert_eq!(LOW, 0xCD);
     assert_eq!(HIGH, 0xAB);
+}
+
+#[test]
+fn const_set() {
+    const R: ConstReg = {
+        let mut r = ConstReg::zero();
+        r.set_low(0x12);
+        r.set_high(0x34);
+        r
+    };
+    assert_eq!(R.raw(), 0x3412);
 }
