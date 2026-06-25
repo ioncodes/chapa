@@ -1,5 +1,8 @@
 # chapa
 
+[![crates.io](https://img.shields.io/crates/v/chapa.svg)](https://crates.io/crates/chapa)
+[![docs.rs](https://docs.rs/chapa/badge.svg)](https://docs.rs/chapa)
+
 Bitfield structs, batteries included!
 
 `chapa` exposes a single attribute macro, `#[bitfield]`, that turns an ordinary
@@ -18,12 +21,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
 - **Bit extraction**: `extract_bits!` masks a value to keep only the specified bit ranges
 
-## Installation
-
-```toml
-[dependencies]
-chapa = { git = "http://github.com/ioncodes/chapa" }
-```
+## MSRV
 
 Requires Rust 1.83 or newer (the generated getters, setters, and `with_*`
 builders are `const fn`).

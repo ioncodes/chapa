@@ -18,6 +18,11 @@
 //! - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
 //! - **Bit extraction**: [`extract_bits!`] masks a value to keep only the specified bit ranges
 //!
+//! ## MSRV
+//!
+//! Requires Rust 1.83 or newer (the generated getters, setters, and `with_*`
+//! builders are `const fn`).
+//!
 //! ## Quick start
 //!
 //! ```rust

@@ -1,6 +1,6 @@
 [package]
 name = "chapa"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.83"
 description = "Bitfield structs, batteries included!"
@@ -13,7 +13,7 @@ keywords = ["bitfield", "bit-manipulation", "msb0", "lsb0"]
 readme = "../README.md"
 
 [dependencies]
-chapa-macros = { version = "0.2", path = "../chapa-macros" }
+chapa-macros = { version = "0.3", path = "../chapa-macros" }
 
 [dev-dependencies]
 trybuild = "1"
