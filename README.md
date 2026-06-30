@@ -177,10 +177,10 @@ pub struct Instr {
 
 ## Constructors and default values
 
-Every struct gets a `const fn zero()` that returns an all-zero instance. There
+Every struct gets a `const fn zeroed()` that returns an all-zero instance. There
 is no `new()`. To give a field its own starting value, add `default = <expr>` and
 `#[derive(Default)]`; the generated `default()` applies those values, while
-`zero()` and `from_raw` always ignore them.
+`zeroed()` and `from_raw` always ignore them.
 
 `default` works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum,
 or nested bitfield, e.g. `default = Mode::On`), including `readonly` ones.
@@ -204,8 +204,8 @@ assert_eq!(c.mode(), 5);
 assert_eq!(c.ready(), true);
 assert_eq!(c.enabled(), false);   // no default -> zero
 
-// zero() and from_raw never inject defaults
-assert_eq!(Config::zero().mode(), 0);
+// zeroed() and from_raw never inject defaults
+assert_eq!(Config::zeroed().mode(), 0);
 assert_eq!(Config::from_raw(0).mode(), 0);
 ```
 

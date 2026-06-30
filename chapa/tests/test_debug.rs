@@ -14,7 +14,7 @@ pub struct StatusReg {
 
 #[test]
 fn debug_lsb0_struct() {
-    let r = StatusReg::zero().with_enabled(true).with_mode(5);
+    let r = StatusReg::zeroed().with_enabled(true).with_mode(5);
     let s = format!("{:?}", r);
     assert_eq!(s, "StatusReg { enabled: true, mode: 5, reserved: 0 }");
 }
@@ -40,7 +40,7 @@ pub struct CtrlReg {
 
 #[test]
 fn debug_enum_field() {
-    let r = CtrlReg::zero().with_mode(Mode::On).with_active(true);
+    let r = CtrlReg::zeroed().with_mode(Mode::On).with_active(true);
     let s = format!("{:?}", r);
     // Mode::On Debug output is "On"
     assert!(s.contains("On"));
@@ -60,7 +60,7 @@ pub struct FlagsReg {
 
 #[test]
 fn debug_with_derive_debug_in_attrs() {
-    let r = FlagsReg::zero().with_flag_a(true);
+    let r = FlagsReg::zeroed().with_flag_a(true);
     let s = format!("{:?}", r);
     assert_eq!(s, "FlagsReg { flag_a: true, flag_b: false }");
 }

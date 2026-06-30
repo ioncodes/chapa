@@ -15,7 +15,7 @@ use crate::ordering;
 /// Emits:
 /// - A `#[repr(transparent)]` newtype wrapping the storage type.
 /// - `{FIELD}_SHIFT` and `{FIELD}_MASK` associated constants for every field.
-/// - `zero()`, `from_raw()`, and `raw()` inherent methods.
+/// - `zeroed()`, `from_raw()`, and `raw()` inherent methods.
 /// - `field()` getter, `set_field()` setter, and `with_field()` builder for each
 ///   non-readonly field; only the getter for readonly fields.
 /// - Alias methods for every `alias = ...` annotation.
@@ -325,7 +325,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
     // Only emit a Default impl when the user opted in with `#[derive(Default)]`.
     // It applies every field's `default = ...` value; with no defaults declared it
-    // is equivalent to `zero()`. The stock derive on the newtype would ignore the
+    // is equivalent to `zeroed()`. The stock derive on the newtype would ignore the
     // field defaults entirely, which is why it is intercepted.
     let default_impl = if user_derived_default {
         quote! {
@@ -376,7 +376,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             /// Field `default = ...` values are applied by `Default::default`
             /// (when `#[derive(Default)]` is present), not here.
             #[inline(always)]
-            #vis const fn zero() -> Self {
+            #vis const fn zeroed() -> Self {
                 Self(0)
             }
 

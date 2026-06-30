@@ -16,7 +16,7 @@ pub struct Config {
 
 #[test]
 fn zero_is_all_zero() {
-    let c = Config::zero();
+    let c = Config::zeroed();
     assert_eq!(c.raw(), 0);
     assert_eq!(c.mode(), 0);
     assert_eq!(c.ready(), false);
@@ -35,7 +35,7 @@ fn default_applies_defaults() {
 
 #[test]
 fn default_differs_from_zero() {
-    assert_ne!(Config::default(), Config::zero());
+    assert_ne!(Config::default(), Config::zeroed());
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn from_raw_ignores_defaults() {
 
 #[test]
 fn zero_is_const() {
-    const C: Config = Config::zero();
+    const C: Config = Config::zeroed();
     assert_eq!(C.raw(), 0);
 }
 
@@ -75,11 +75,11 @@ fn readonly_field_default() {
     assert_eq!(r.version(), 0xF);
     assert_eq!(r.value(), 0);
     assert_eq!(r.raw(), 0xF0);
-    // zero() still ignores the default
-    assert_eq!(ReadonlyDefault::zero().version(), 0);
+    // zeroed() still ignores the default
+    assert_eq!(ReadonlyDefault::zeroed().version(), 0);
 }
 
-/// A struct with no `default` anywhere: `default()` equals `zero()`.
+/// A struct with no `default` anywhere: `default()` equals `zeroed()`.
 #[bitfield(u8, order = lsb0)]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct NoDefaults {
@@ -89,9 +89,9 @@ pub struct NoDefaults {
 
 #[test]
 fn no_defaults_default_equals_zero() {
-    assert_eq!(NoDefaults::zero().raw(), 0);
+    assert_eq!(NoDefaults::zeroed().raw(), 0);
     assert_eq!(NoDefaults::default().raw(), 0);
-    assert_eq!(NoDefaults::default(), NoDefaults::zero());
+    assert_eq!(NoDefaults::default(), NoDefaults::zeroed());
 }
 
 /// Out-of-range default values truncate to the field width, just like setters.
@@ -148,7 +148,7 @@ fn enum_field_default() {
     assert_eq!(w.mode(), Mode::Turbo); // discriminant 2 -> bits 1..=2 = 0b100
     assert_eq!(w.active(), false);
     assert_eq!(w.raw(), 0x4);
-    assert_eq!(WithEnum::zero().mode(), Mode::Off); // zero() ignores defaults
+    assert_eq!(WithEnum::zeroed().mode(), Mode::Off); // zeroed() ignores defaults
 }
 
 /// Nested bitfield fields can carry a default expressed as a struct value.
@@ -164,7 +164,7 @@ pub struct Nibble {
 #[bitfield(u16, order = lsb0)]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct WithNested {
-    #[bits(0..=3, default = Nibble::zero().with_high(3).with_low(1))]
+    #[bits(0..=3, default = Nibble::zeroed().with_high(3).with_low(1))]
     nibble: Nibble,
     #[bits(4..=7)]
     rest: u8,
@@ -178,5 +178,5 @@ fn nested_field_default() {
     assert_eq!(w.rest(), 0);
     // high=3 (bits 0..=1 = 0b11), low=1 (bits 2..=3 = 0b01) -> nibble = 0b0111
     assert_eq!(w.raw(), 0x7);
-    assert_eq!(WithNested::zero().raw(), 0);
+    assert_eq!(WithNested::zeroed().raw(), 0);
 }

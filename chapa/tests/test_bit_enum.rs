@@ -112,7 +112,7 @@ pub struct DisplayConfig {
 
 #[test]
 fn enum_in_bitfield_roundtrip() {
-    let dc = DisplayConfig::zero()
+    let dc = DisplayConfig::zeroed()
         .with_rst(true)
         .with_fmt(VideoFormat::Mpal);
     assert_eq!(dc.rst(), true);
@@ -127,7 +127,7 @@ fn enum_in_bitfield_all_variants() {
         (VideoFormat::Mpal, 2),
         (VideoFormat::Debug, 3),
     ] {
-        let dc = DisplayConfig::zero().with_fmt(variant);
+        let dc = DisplayConfig::zeroed().with_fmt(variant);
         assert_eq!(dc.fmt(), variant);
         assert_eq!(variant.raw(), expected_raw);
     }

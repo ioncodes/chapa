@@ -11,26 +11,26 @@ pub struct AliasReg {
 
 #[test]
 fn single_alias_getter() {
-    let r = AliasReg::zero().with_low(5);
+    let r = AliasReg::zeroed().with_low(5);
     assert_eq!(r.lo(), 5);
 }
 
 #[test]
 fn single_alias_setter() {
-    let mut r = AliasReg::zero();
+    let mut r = AliasReg::zeroed();
     r.set_lo(0xA);
     assert_eq!(r.low(), 0xA);
 }
 
 #[test]
 fn single_alias_builder() {
-    let r = AliasReg::zero().with_lo(0xC);
+    let r = AliasReg::zeroed().with_lo(0xC);
     assert_eq!(r.low(), 0xC);
 }
 
 #[test]
 fn multi_alias() {
-    let r = AliasReg::zero().with_hi(0xD);
+    let r = AliasReg::zeroed().with_hi(0xD);
     assert_eq!(r.high(), 0xD);
     assert_eq!(r.hi(), 0xD);
     assert_eq!(r.upper(), 0xD);
@@ -38,7 +38,7 @@ fn multi_alias() {
 
 #[test]
 fn multi_alias_setter() {
-    let mut r = AliasReg::zero();
+    let mut r = AliasReg::zeroed();
     r.set_upper(0xF);
     assert_eq!(r.high(), 0xF);
     assert_eq!(r.hi(), 0xF);

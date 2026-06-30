@@ -37,7 +37,7 @@
 //!     #[bits(4..=7)] _reserved: u8, // Can be omitted; "_" makes it readonly
 //! }
 //!
-//! let r = StatusReg::zero()
+//! let r = StatusReg::zeroed()
 //!     .with_enabled(true)
 //!     .with_mode(5);
 //!
@@ -81,7 +81,7 @@
 //!     #[bits(8..=31, readonly)] payload: u32,
 //! }
 //!
-//! let cw = ControlWord::zero()
+//! let cw = ControlWord::zeroed()
 //!     .with_opcode(0xA)
 //!     .with_dst(0x3);
 //! assert_eq!(cw.raw(), 0xA300_0000);
@@ -116,7 +116,7 @@
 //!     #[bits(1..=2)] fmt: VideoFormat,
 //! }
 //!
-//! let dc = DisplayConfig::zero()
+//! let dc = DisplayConfig::zeroed()
 //!     .with_enable(true)
 //!     .with_fmt(VideoFormat::Pal);
 //! assert_eq!(dc.fmt(), VideoFormat::Pal);
@@ -171,10 +171,10 @@
 //!
 //! ## Constructors and default values
 //!
-//! Every struct gets a `const fn zero()` returning an all-zero instance. There
+//! Every struct gets a `const fn zeroed()` returning an all-zero instance. There
 //! is no `new()`. To give a field its own starting value, add `default = <expr>`
 //! and `#[derive(Default)]`: the generated `default()` applies those values,
-//! while `zero()` and `from_raw` always ignore them.
+//! while `zeroed()` and `from_raw` always ignore them.
 //!
 //! Works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum, or
 //! nested bitfield, e.g. `default = Mode::On`), including `readonly` ones;
@@ -196,8 +196,8 @@
 //! assert_eq!(c.mode(), 5);
 //! assert_eq!(c.ready(), true);
 //! assert_eq!(c.enabled(), false); // no default -> zero
-//! // zero() and from_raw never inject defaults
-//! assert_eq!(Config::zero().mode(), 0);
+//! // zeroed() and from_raw never inject defaults
+//! assert_eq!(Config::zeroed().mode(), 0);
 //! assert_eq!(Config::from_raw(0).mode(), 0);
 //! ```
 //!
@@ -220,7 +220,7 @@
 //! }
 //!
 //! const MASK: u32 = 0x0000_00FF;
-//! let a = StatusReg::zero().with_enabled(true);
+//! let a = StatusReg::zeroed().with_enabled(true);
 //! let b: u32 = 0x0000_00AA;
 //!
 //! let result = (a & !MASK) | (b & MASK); // result: StatusReg
