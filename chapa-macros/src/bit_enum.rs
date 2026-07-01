@@ -99,6 +99,27 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
         quote! { #lit => ::core::result::Result::Ok(#name::#ident), }
     });
 
+    // Reflection metadata, emitted only under the `reflection` feature. Both
+    // branches always compile, so `resolved` is never unused.
+    let reflection_impl = if cfg!(feature = "reflection") {
+        let name_str = name.to_string();
+        let variants = resolved.iter().map(|(ident, value)| {
+            let vstr = ident.to_string();
+            let lit = proc_macro2::Literal::u128_unsuffixed(*value);
+            quote! { (#lit, #vstr) }
+        });
+        quote! {
+            impl #impl_generics ::chapa::Reflect for #name #ty_generics #where_clause {
+                const REFLECT: ::chapa::FieldKind = ::chapa::FieldKind::Enum(&::chapa::EnumInfo {
+                    name: #name_str,
+                    variants: &[ #(#variants),* ],
+                });
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         impl #impl_generics ::chapa::BitField for #name #ty_generics #where_clause {
             type Storage = #storage_ident;
@@ -137,6 +158,8 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
                 <Self as ::chapa::BitField>::try_from_raw(raw)
             }
         }
+
+        #reflection_impl
     })
 }
 

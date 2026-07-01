@@ -17,6 +17,7 @@
 //! - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 //! - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
 //! - **Bit extraction**: [`extract_bits!`] masks a value to keep only the specified bit ranges
+//! - **Reflection**: Opt into the `reflection` feature for compile-time field metadata (`FIELDS`, bit positions, enum variants)
 //!
 //! ## MSRV
 //!
@@ -251,6 +252,37 @@
 //!
 //! See the [`extract_bits!`] documentation for full syntax details.
 //!
+//! ## Reflection
+//!
+//! Enable the `reflection` feature to get compile-time field metadata for every
+//! `#[bitfield]` struct and `#[derive(BitEnum)]` enum. Each struct gains an
+//! inherent `FIELDS: &'static [FieldInfo]` const; the types ([`FieldInfo`],
+//! [`FieldKind`], [`EnumInfo`]) and the [`Reflect`] trait are re-exported at the
+//! crate root when the feature is on. Offsets and widths are **physical** (in
+//! storage-value coordinates), so a field's value is always
+//! `(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
+//!
+//! ```ignore
+//! use chapa::{bitfield, BitEnum, FieldKind};
+//!
+//! #[derive(Copy, Clone, BitEnum)]
+//! pub enum Mode { Off = 0, On = 1, #[fallback] Reserved = 3 }
+//!
+//! #[bitfield(u16, order = lsb0)]
+//! #[derive(Copy, Clone)]
+//! pub struct Reg {
+//!     #[bits(0)] enabled: bool,
+//!     #[bits(1..=2)] mode: Mode,
+//!     #[bits(4..=7)] count: u8,
+//! }
+//!
+//! let mode = Reg::FIELDS.iter().find(|f| f.name == "mode").unwrap();
+//! assert_eq!((mode.offset, mode.width), (1, 2));
+//! if let FieldKind::Enum(info) = mode.kind {
+//!     assert_eq!(info.variants, &[(0, "Off"), (1, "On"), (3, "Reserved")]);
+//! }
+//! ```
+//!
 //! ## Generated API
 //!
 //! For a field `foo: u8` spanning bits `4..=7` the macro generates:
@@ -282,6 +314,72 @@ pub mod mask;
 pub use chapa_macros::bitfield;
 pub use chapa_macros::BitEnum;
 pub use mask::{lsb0_mask, msb0_mask};
+
+#[cfg(feature = "reflection")]
+pub use reflection::{EnumInfo, FieldInfo, FieldKind, Reflect};
+
+/// Compile-time field metadata emitted by the `#[bitfield]` and
+/// `#[derive(BitEnum)]` macros when the `reflection` feature is enabled.
+///
+/// Every bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
+/// and a [`Reflect`] impl; every `#[derive(BitEnum)]` enum gains a [`Reflect`]
+/// impl carrying its variant table. This lets tools (debuggers, inspectors)
+/// enumerate a value's fields, their bit positions, and their meaning without
+/// any hand-written tables.
+///
+/// Offsets and widths are **physical** (in storage-value coordinates), so a
+/// field's value is always `(raw >> offset) & ((1 << width) - 1)` regardless of
+/// the struct's `msb0`/`lsb0` ordering.
+#[cfg(feature = "reflection")]
+pub mod reflection {
+    /// Describes one field of a bitfield struct.
+    #[derive(Debug, Clone, Copy)]
+    pub struct FieldInfo {
+        /// The field's accessor name (leading `_` stripped).
+        pub name: &'static str,
+        /// Physical shift of the field within the storage value.
+        pub offset: u32,
+        /// Number of bits the field occupies.
+        pub width: u32,
+        /// Extra accessor names declared with `alias = ...`.
+        pub aliases: &'static [&'static str],
+        /// Whether the field suppresses setters.
+        pub readonly: bool,
+        /// How the field's value should be interpreted.
+        pub kind: FieldKind,
+    }
+
+    /// The interpretation of a field's raw bits.
+    #[derive(Debug, Clone, Copy)]
+    pub enum FieldKind {
+        /// A single-bit boolean.
+        Bool,
+        /// A primitive unsigned integer.
+        Uint,
+        /// A `#[derive(BitEnum)]` enum; carries its variant table.
+        Enum(&'static EnumInfo),
+        /// A nested bitfield struct; carries its own fields for recursion.
+        Struct(&'static [FieldInfo]),
+    }
+
+    /// Variant table for a `#[derive(BitEnum)]` enum.
+    #[derive(Debug, Clone, Copy)]
+    pub struct EnumInfo {
+        /// The enum's type name.
+        pub name: &'static str,
+        /// `(discriminant, variant name)` pairs, in declaration order.
+        pub variants: &'static [(u128, &'static str)],
+    }
+
+    /// Implemented by every bitfield struct and `#[derive(BitEnum)]` enum under
+    /// the `reflection` feature, describing how the type appears when embedded as
+    /// a field. Used to resolve nested field kinds (enum vs. struct) at the field
+    /// site, where the two are otherwise indistinguishable.
+    pub trait Reflect {
+        /// This type's field kind (`Struct` for bitfields, `Enum` for bit enums).
+        const REFLECT: FieldKind;
+    }
+}
 
 /// Trait for types that can be used as the backing storage of a bitfield.
 ///

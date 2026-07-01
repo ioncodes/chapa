@@ -20,6 +20,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
 - **Bit extraction**: `extract_bits!` masks a value to keep only the specified bit ranges
+- **Reflection**: Opt into the `reflection` feature for compile-time field metadata (`FIELDS`, bit positions, enum variants)
 
 ## MSRV
 
@@ -40,7 +41,7 @@ pub struct StatusReg {
     #[bits(4..=7)] _reserved: u8 // Can be ommited; "_" makes it readonly
 }
 
-let r = StatusReg::zero()
+let r = StatusReg::zeroed()
     .with_enabled(true)
     .with_mode(5);
 
@@ -84,7 +85,7 @@ pub struct ControlWord {
     #[bits(8..=31, readonly)] payload: u32,
 }
 
-let cw = ControlWord::zero()
+let cw = ControlWord::zeroed()
   .with_opcode(0xA)
   .with_dst(0x3);
 assert_eq!(cw.raw(), 0xA300_0000);
@@ -115,7 +116,7 @@ pub struct DisplayConfig {
     #[bits(1..=2)] fmt: VideoFormat,
 }
 
-let dc = DisplayConfig::zero()
+let dc = DisplayConfig::zeroed()
     .with_enable(true)
     .with_fmt(VideoFormat::Pal);
 assert_eq!(dc.fmt(), VideoFormat::Pal);
@@ -227,7 +228,7 @@ pub struct Msr {
 const RESTORE_MASK: u32 = 0x0000_FF73;
 
 let srr1: u32 = 0x0000_8000;
-let msr = Msr::zero();
+let msr = Msr::zeroed();
 
 // No .raw() / from_raw() needed:
 let updated = (msr & !RESTORE_MASK) | (srr1 & RESTORE_MASK);
@@ -268,6 +269,50 @@ let srr1: u32 = masked.raw();
 ```
 
 The explicit form (`msb0 u32`) emits `const MASK: T = ...`, so the mask is guaranteed to be computed at compile time. The struct form calls an `#[inline]` helper; LLVM should constant-fold the mask in practice, but there is no language-level guarantee.
+
+## Reflection
+
+Enable the `reflection` feature to get compile-time field metadata for every
+`#[bitfield]` struct and `#[derive(BitEnum)]` enum:
+
+```toml
+[dependencies]
+chapa = { version = "0.5", features = ["reflection"] }
+```
+
+Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
+describing its fields: their accessor name, bit position, aliases and how the
+raw bits should be interpreted. Offsets and widths are **physical** (in
+storage-value "coordinates"), so a field's value is always
+`(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
+Nested enum and struct fields carry their own variant table / fields.
+
+```rust
+use chapa::{bitfield, BitEnum, FieldKind};
+
+#[derive(Copy, Clone, BitEnum)]
+pub enum Mode { Off = 0, On = 1, #[fallback] Reserved = 3 }
+
+#[bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone)]
+pub struct Reg {
+    #[bits(0)] enabled: bool,
+    #[bits(1..=2)] mode: Mode,
+    #[bits(4..=7)] count: u8,
+}
+
+let mode = Reg::FIELDS.iter().find(|f| f.name == "mode").unwrap();
+assert_eq!(mode.offset, 1);
+assert_eq!(mode.width, 2);
+if let FieldKind::Enum(info) = mode.kind {
+    assert_eq!(info.name, "Mode");
+    assert_eq!(info.variants, &[(0, "Off"), (1, "On"), (3, "Reserved")]);
+}
+```
+
+`FieldKind` distinguishes `Bool`, `Uint`, `Enum(&EnumInfo)` and
+`Struct(&[FieldInfo])`. The types (`FieldInfo`, `FieldKind`, `EnumInfo`) and the
+`Reflect` trait are re-exported at the crate root when the feature is on.
 
 ## Generated API
 

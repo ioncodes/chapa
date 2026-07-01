@@ -47,6 +47,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     // Per-field `default = ...` contributions, OR'd together inside the generated
     // `Default::default()`.
     let mut default_contribs = Vec::new();
+    // Per-field `FieldInfo` literals for the `reflection` feature.
+    let mut field_infos = Vec::new();
 
     for field in &def.fields {
         let phys = ordering::compute(def.args.order, &field.range, def.effective_width);
@@ -109,6 +111,32 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             accessor, field.range.start, field.range.end
         );
         let field_width = phys.field_width;
+
+        // Reflection metadata for this field, built only when the feature is on
+        // (mirrors the gating in `bit_enum.rs`). `offset`/`width` are physical
+        // (storage-value coordinates), so consumers extract with
+        // `(raw >> offset) & ((1 << width) - 1)` regardless of ordering. Enum vs.
+        // nested-struct is resolved through the field type's own `Reflect` impl,
+        // since both are `FieldType::Nested` at the field site.
+        if cfg!(feature = "reflection") {
+            let field_kind = match &field.ty {
+                FieldType::Bool => quote! { ::chapa::FieldKind::Bool },
+                FieldType::Primitive(_) => quote! { ::chapa::FieldKind::Uint },
+                FieldType::Nested(ty) => quote! { <#ty as ::chapa::Reflect>::REFLECT },
+            };
+            let readonly = field.readonly;
+            let aliases = &field.aliases;
+            field_infos.push(quote! {
+                ::chapa::FieldInfo {
+                    name: #accessor,
+                    offset: #shift_val,
+                    width: #field_width,
+                    aliases: &[ #(#aliases),* ],
+                    readonly: #readonly,
+                    kind: #field_kind,
+                }
+            });
+        }
 
         // Generate getter
         let getter_body = match &field.ty {
@@ -365,6 +393,23 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         quote! {}
     };
 
+    // Reflection metadata, emitted only under the `reflection` feature. Both
+    // branches always compile, so `field_infos` is never unused.
+    let reflection_impl = if cfg!(feature = "reflection") {
+        quote! {
+            impl #name {
+                /// Compile-time field metadata (enabled by the `reflection` feature).
+                #vis const FIELDS: &'static [::chapa::FieldInfo] = &[ #(#field_infos),* ];
+            }
+
+            impl ::chapa::Reflect for #name {
+                const REFLECT: ::chapa::FieldKind = ::chapa::FieldKind::Struct(#name::FIELDS);
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #struct_def
 
@@ -400,6 +445,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         #ops_impls
         #debug_impl
         #default_impl
+        #reflection_impl
     }
 }
 
