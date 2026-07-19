@@ -9,47 +9,77 @@ pub enum BitOrder {
     Lsb0,
 }
 
-/// The primitive integer type chosen as backing storage for a bitfield.
+/// The width of a primitive integer, named by bit count.
+///
+/// Used both for the backing storage of a bitfield (always unsigned) and to
+/// size primitive field types, which may be signed or unsigned; the
+/// `unsigned_ident`/`signed_ident` pair maps a width to the concrete Rust
+/// keyword.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageKind {
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
+    W8,
+    W16,
+    W32,
+    W64,
+    W128,
 }
 
 impl StorageKind {
-    /// Returns the number of bits in this storage type.
+    /// Returns the number of bits in this width.
     pub fn bit_width(self) -> u32 {
         match self {
-            StorageKind::U8 => 8,
-            StorageKind::U16 => 16,
-            StorageKind::U32 => 32,
-            StorageKind::U64 => 64,
-            StorageKind::U128 => 128,
+            StorageKind::W8 => 8,
+            StorageKind::W16 => 16,
+            StorageKind::W32 => 32,
+            StorageKind::W64 => 64,
+            StorageKind::W128 => 128,
         }
     }
 
-    /// Returns the Rust keyword for this type (e.g. `"u32"`).
-    pub fn ident(self) -> &'static str {
+    /// Returns the unsigned Rust keyword for this width (e.g. `"u32"`).
+    pub fn unsigned_ident(self) -> &'static str {
         match self {
-            StorageKind::U8 => "u8",
-            StorageKind::U16 => "u16",
-            StorageKind::U32 => "u32",
-            StorageKind::U64 => "u64",
-            StorageKind::U128 => "u128",
+            StorageKind::W8 => "u8",
+            StorageKind::W16 => "u16",
+            StorageKind::W32 => "u32",
+            StorageKind::W64 => "u64",
+            StorageKind::W128 => "u128",
         }
     }
 
-    /// Parses a Rust integer keyword into a `StorageKind`, or `None` if unrecognised.
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Returns the signed Rust keyword for this width (e.g. `"i32"`).
+    pub fn signed_ident(self) -> &'static str {
+        match self {
+            StorageKind::W8 => "i8",
+            StorageKind::W16 => "i16",
+            StorageKind::W32 => "i32",
+            StorageKind::W64 => "i64",
+            StorageKind::W128 => "i128",
+        }
+    }
+
+    /// Parses an unsigned integer keyword (`u8`...`u128`) into its
+    /// `StorageKind`, or `None` if unrecognised.
+    pub fn from_unsigned_str(s: &str) -> Option<Self> {
         match s {
-            "u8" => Some(StorageKind::U8),
-            "u16" => Some(StorageKind::U16),
-            "u32" => Some(StorageKind::U32),
-            "u64" => Some(StorageKind::U64),
-            "u128" => Some(StorageKind::U128),
+            "u8" => Some(StorageKind::W8),
+            "u16" => Some(StorageKind::W16),
+            "u32" => Some(StorageKind::W32),
+            "u64" => Some(StorageKind::W64),
+            "u128" => Some(StorageKind::W128),
+            _ => None,
+        }
+    }
+
+    /// Parses a signed integer keyword (`i8`...`i128`) into the `StorageKind`
+    /// of the same width, or `None` if unrecognised.
+    pub fn from_signed_str(s: &str) -> Option<Self> {
+        match s {
+            "i8" => Some(StorageKind::W8),
+            "i16" => Some(StorageKind::W16),
+            "i32" => Some(StorageKind::W32),
+            "i64" => Some(StorageKind::W64),
+            "i128" => Some(StorageKind::W128),
             _ => None,
         }
     }
@@ -57,15 +87,15 @@ impl StorageKind {
     /// Pick the smallest storage kind that fits `bits` bits.
     pub fn smallest_fitting(bits: u32) -> Option<Self> {
         if bits <= 8 {
-            Some(StorageKind::U8)
+            Some(StorageKind::W8)
         } else if bits <= 16 {
-            Some(StorageKind::U16)
+            Some(StorageKind::W16)
         } else if bits <= 32 {
-            Some(StorageKind::U32)
+            Some(StorageKind::W32)
         } else if bits <= 64 {
-            Some(StorageKind::U64)
+            Some(StorageKind::W64)
         } else if bits <= 128 {
-            Some(StorageKind::U128)
+            Some(StorageKind::W128)
         } else {
             None
         }
@@ -118,8 +148,12 @@ impl BitRange {
 pub enum FieldType {
     /// A single `bool` bit.
     Bool,
-    /// A primitive unsigned integer (`u8`...`u128`).
-    Primitive(StorageKind),
+    /// A primitive unsigned integer (`u8`...`u128`) of the given width.
+    PrimitiveUnsigned(StorageKind),
+    /// A primitive signed integer (`i8`...`i128`) of the given width. Getters
+    /// sign-extend the field's most significant bit, setters truncate
+    /// two's-complement values to the field width.
+    PrimitiveSigned(StorageKind),
     /// A nested bitfield struct implementing [`chapa::BitField`].
     Nested(syn::Type),
 }
@@ -133,8 +167,7 @@ pub struct FieldDef {
     pub accessor_name: String,
     /// Resolved field type.
     pub ty: FieldType,
-    #[allow(dead_code)]
-    /// Original syntactic type (kept for diagnostics).
+    /// Original type.
     pub raw_ty: syn::Type,
     /// Logical bit range declared in `#[bits(...)]`.
     pub range: BitRange,

@@ -125,10 +125,18 @@ where
 /// which is computed at compile time. The struct form calls an [`#[inline]`](inline) helper;
 /// LLVM will constant-fold the mask in optimized builds but there is no language-level `const` guarantee.
 ///
-/// ```ignore
-/// // Ordering deduced from the chapa struct (MSR is #[bitfield(u32, order = msb0)])
-/// let masked_msr: Msr = extract_bits!(msr; 0, 5..=9, 16..=31);
-/// let srr1: u32 = masked_msr.raw();
+/// ```
+/// # use chapa::{bitfield, extract_bits};
+/// # #[bitfield(u32, order = msb0)]
+/// # #[derive(Copy, Clone)]
+/// # struct Packet {
+/// #     #[bits(0)] priority: bool,
+/// #     #[bits(5..=9)] kind: u8,
+/// #     #[bits(16..=31)] payload: u16,
+/// # }
+/// let packet = Packet::from_raw(0xFFFF_FFFF);
+/// let masked: Packet = extract_bits!(packet; 0, 5..=9, 16..=31);
+/// assert_eq!(masked.raw(), 0x87C0_FFFF);
 /// ```
 ///
 /// [`BitField::IS_MSB0`]: crate::BitField::IS_MSB0

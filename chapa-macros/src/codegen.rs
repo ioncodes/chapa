@@ -23,7 +23,7 @@ use crate::ordering;
 pub fn generate(def: &BitfieldDef) -> TokenStream {
     let vis = &def.vis;
     let name = &def.name;
-    let storage_ident = format_ident!("{}", def.args.storage.ident());
+    let storage_ident = format_ident!("{}", def.args.storage.unsigned_ident());
 
     // The user's `#[derive(Debug)]` / `#[derive(Default)]` are intercepted in
     // `parse`: these flags drive our own impls (below), and `def.user_attrs` is
@@ -40,6 +40,21 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         #vis struct #name(#storage_ident);
     };
 
+    // rust-analyzer fix (?)
+    let shadow_fields = def.fields.iter().map(|f| {
+        let field_name = &f.name;
+        let field_ty = &f.raw_ty;
+        quote! { #field_name: #field_ty }
+    });
+    let span_anchor = quote! {
+        const _: () = {
+            #[allow(dead_code)]
+            struct ChapaFieldSpans {
+                #(#shadow_fields),*
+            }
+        };
+    };
+
     // Generate Copy + Clone impls are typically from derive, but user provides via attrs.
     // Generate associated consts and methods
     let mut consts = Vec::new();
@@ -54,8 +69,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         let phys = ordering::compute(def.args.order, &field.range, def.effective_width);
 
         let accessor = &field.accessor_name;
-        let shift_name = format_ident!("{}_SHIFT", accessor.to_uppercase());
-        let mask_name = format_ident!("{}_MASK", accessor.to_uppercase());
+        let shift_name = format_ident!("{}_SHIFT", accessor.to_uppercase(), span = field.span);
+        let mask_name = format_ident!("{}_MASK", accessor.to_uppercase(), span = field.span);
 
         let shift_val = phys.shift;
         let mask_val = phys.mask;
@@ -92,8 +107,12 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         // logic lives in exactly one place.
         let insert = |value: &TokenStream| match &field.ty {
             FieldType::Bool => quote! { (if #value { Self::#mask_name } else { 0 }) },
-            FieldType::Primitive(_) => {
+            FieldType::PrimitiveUnsigned(_) => {
                 quote! { (((#value as #storage_ident) << Self::#shift_name) & Self::#mask_name) }
+            }
+            FieldType::PrimitiveSigned(sk) => {
+                let field_ty = format_ident!("{}", sk.signed_ident());
+                quote! { ((((#value as #field_ty) as #storage_ident) << Self::#shift_name) & Self::#mask_name) }
             }
             FieldType::Nested(ty) => quote! {
                 (((<#ty as ::chapa::BitField>::raw(&(#value)) as #storage_ident) << Self::#shift_name) & Self::#mask_name)
@@ -105,7 +124,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             default_contribs.push(insert(&quote! { (#default_expr) }));
         }
 
-        let getter_name = format_ident!("{}", accessor);
+        let getter_name = format_ident!("{}", accessor, span = field.span);
         let getter_doc = format!(
             "Returns the `{}` field (bits {}..={}).",
             accessor, field.range.start, field.range.end
@@ -121,7 +140,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         if cfg!(feature = "reflection") {
             let field_kind = match &field.ty {
                 FieldType::Bool => quote! { ::chapa::FieldKind::Bool },
-                FieldType::Primitive(_) => quote! { ::chapa::FieldKind::Uint },
+                FieldType::PrimitiveUnsigned(_) => quote! { ::chapa::FieldKind::Uint },
+                FieldType::PrimitiveSigned(_) => quote! { ::chapa::FieldKind::Sint },
                 FieldType::Nested(ty) => quote! { <#ty as ::chapa::Reflect>::REFLECT },
             };
             let readonly = field.readonly;
@@ -143,14 +163,22 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             FieldType::Bool => {
                 quote! { (self.0 & Self::#mask_name) != 0 }
             }
-            FieldType::Primitive(sk) => {
-                let field_ty = format_ident!("{}", sk.ident());
+            FieldType::PrimitiveUnsigned(sk) => {
+                let field_ty = format_ident!("{}", sk.unsigned_ident());
                 quote! { ((self.0 >> Self::#shift_name) & ((1 << #field_width) - 1)) as #field_ty }
+            }
+            FieldType::PrimitiveSigned(sk) => {
+                let field_ty = format_ident!("{}", sk.signed_ident());
+                let unsigned_ty = format_ident!("{}", sk.unsigned_ident());
+                let sign_shift = sk.bit_width() - field_width;
+                quote! {
+                    ((((self.0 >> Self::#shift_name) as #unsigned_ty) << #sign_shift) as #field_ty) >> #sign_shift
+                }
             }
             FieldType::Nested(ty) => {
                 let nested_storage =
-                    StorageKind::smallest_fitting(field_width).unwrap_or(StorageKind::U128);
-                let nested_storage_ident = format_ident!("{}", nested_storage.ident());
+                    StorageKind::smallest_fitting(field_width).unwrap_or(StorageKind::W128);
+                let nested_storage_ident = format_ident!("{}", nested_storage.unsigned_ident());
                 quote! {
                     let bits = ((self.0 >> Self::#shift_name) & ((1 << #field_width) - 1)) as #nested_storage_ident;
                     <#ty as ::chapa::BitField>::from_raw(bits)
@@ -160,8 +188,12 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
         let return_ty = match &field.ty {
             FieldType::Bool => quote! { bool },
-            FieldType::Primitive(sk) => {
-                let ty = format_ident!("{}", sk.ident());
+            FieldType::PrimitiveUnsigned(sk) => {
+                let ty = format_ident!("{}", sk.unsigned_ident());
+                quote! { #ty }
+            }
+            FieldType::PrimitiveSigned(sk) => {
+                let ty = format_ident!("{}", sk.signed_ident());
                 quote! { #ty }
             }
             FieldType::Nested(ty) => quote! { #ty },
@@ -177,8 +209,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
         // Generate setter and with_* (unless readonly)
         if !field.readonly {
-            let setter_name = format_ident!("set_{}", accessor);
-            let with_name = format_ident!("with_{}", accessor);
+            let setter_name = format_ident!("set_{}", accessor, span = field.span);
+            let with_name = format_ident!("with_{}", accessor, span = field.span);
             let setter_doc = format!(
                 "Sets the `{}` field (bits {}..={}).",
                 accessor, field.range.start, field.range.end
@@ -190,8 +222,12 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
             let param_ty = match &field.ty {
                 FieldType::Bool => quote! { bool },
-                FieldType::Primitive(sk) => {
-                    let ty = format_ident!("{}", sk.ident());
+                FieldType::PrimitiveUnsigned(sk) => {
+                    let ty = format_ident!("{}", sk.unsigned_ident());
+                    quote! { #ty }
+                }
+                FieldType::PrimitiveSigned(sk) => {
+                    let ty = format_ident!("{}", sk.signed_ident());
                     quote! { #ty }
                 }
                 FieldType::Nested(ty) => quote! { #ty },
@@ -412,6 +448,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
     quote! {
         #struct_def
+        #span_anchor
 
         impl #name {
             #(#consts)*
@@ -453,23 +490,23 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 /// given storage kind, so rustc doesn't need an extra cast.
 fn storage_mask_literal(storage: StorageKind, mask: u128) -> TokenStream {
     match storage {
-        StorageKind::U8 => {
+        StorageKind::W8 => {
             let v = mask as u8;
             quote! { #v }
         }
-        StorageKind::U16 => {
+        StorageKind::W16 => {
             let v = mask as u16;
             quote! { #v }
         }
-        StorageKind::U32 => {
+        StorageKind::W32 => {
             let v = mask as u32;
             quote! { #v }
         }
-        StorageKind::U64 => {
+        StorageKind::W64 => {
             let v = mask as u64;
             quote! { #v }
         }
-        StorageKind::U128 => {
+        StorageKind::W128 => {
             let v = mask;
             quote! { #v }
         }

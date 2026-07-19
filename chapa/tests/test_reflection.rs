@@ -30,6 +30,8 @@ pub struct Reg {
     count: u8,
     #[bits(8..=11)]
     inner: Inner,
+    #[bits(12..=14)]
+    delta: i8,
 }
 
 fn field<'a>(fields: &'a [FieldInfo], name: &str) -> &'a FieldInfo {
@@ -53,6 +55,14 @@ fn uint_field() {
     assert_eq!(f.offset, 4);
     assert_eq!(f.width, 4);
     assert!(matches!(f.kind, FieldKind::Uint));
+}
+
+#[test]
+fn sint_field() {
+    let f = field(Reg::FIELDS, "delta");
+    assert_eq!(f.offset, 12);
+    assert_eq!(f.width, 3);
+    assert!(matches!(f.kind, FieldKind::Sint));
 }
 
 #[test]

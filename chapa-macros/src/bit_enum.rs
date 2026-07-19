@@ -87,7 +87,7 @@ pub fn generate(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let storage_ident = format_ident!("{}", storage.ident());
+    let storage_ident = format_ident!("{}", storage.unsigned_ident());
 
     let from_raw_arms = resolved.iter().map(|(ident, value)| {
         let lit = syn::LitInt::new(&value.to_string(), ident.span());

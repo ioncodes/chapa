@@ -6,12 +6,13 @@
 Bitfield structs, batteries included!
 
 `chapa` exposes a single attribute macro, `#[bitfield]`, that turns an ordinary
-struct into newtype backed by a single primitive. Every field maps to an exact
+struct into a newtype backed by a single primitive. Every field maps to an exact
 range of bits and gets a generated getter, setter, and `with_*` builder.
 
 ## Features
 
 - **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
+- **Signed fields**: `i8`...`i128` field types with automatic sign extension
 - **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
 - **Nested bitfields**: Embed one bitfield struct inside another
 - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
@@ -38,14 +39,14 @@ use chapa::bitfield;
 pub struct StatusReg {
     #[bits(0)] enabled: bool,
     #[bits(1..=3)] mode: u8,
-    #[bits(4..=7)] _reserved: u8 // Can be ommited; "_" makes it readonly
+    #[bits(4..=7)] _reserved: u8, // Leading "_" makes the field readonly
 }
 
 let r = StatusReg::zeroed()
     .with_enabled(true)
     .with_mode(5);
 
-assert_eq!(r.enabled(), true);
+assert!(r.enabled());
 assert_eq!(r.mode(), 5);
 assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 ```
@@ -70,6 +71,11 @@ assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 | `alias = "name"`    | Generate additional accessor under `name`         |
 | `alias = ["a","b"]` | Multiple aliases                                  |
 | `overlay = "group"` | Allow overlap with fields in other overlay groups |
+
+A field's type may be `bool` (single bit), an unsigned integer (`u8`...`u128`),
+a signed integer (`i8`...`i128`, two's-complement: sign-extended on read,
+truncated to the field width on write), a `#[derive(BitEnum)]` enum, or another
+bitfield struct.
 
 ## MSB-0 example
 
@@ -148,8 +154,15 @@ pub struct Nibble {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Word {
     #[bits(0..=3)] top: Nibble,
-    #[bits(28..=31)] bot: u8,
+    #[bits(28..=31)] bottom: u8,
 }
+
+let nibble = Nibble::zeroed().with_high(2).with_low(1);
+let word = Word::zeroed().with_top(nibble).with_bottom(0xA);
+
+assert_eq!(nibble.raw(), 0b1001);
+assert_eq!(word.raw(), 0x9000_000A);
+assert_eq!(word.top(), nibble);
 ```
 
 ## Overlay groups
@@ -174,6 +187,13 @@ pub struct Instr {
     #[bits(6..=10,  overlay = "i_form")] dst: u8,
     #[bits(11..=31, overlay = "i_form")] imm: u32,
 }
+
+let r_form = Instr::zeroed().with_opcode(0x20).with_rs(3).with_ra(4).with_rb(5);
+assert_eq!((r_form.rs(), r_form.ra(), r_form.rb()), (3, 4, 5));
+
+let i_form = Instr::zeroed().with_opcode(0x08).with_dst(7).with_imm(0x1_2345);
+assert_eq!((i_form.dst(), i_form.imm()), (7, 0x1_2345));
+assert_eq!(i_form.rs(), i_form.dst()); // Both names cover bits 6..=10
 ```
 
 ## Constructors and default values
@@ -219,19 +239,21 @@ Every bitfield struct implements `BitAnd`, `BitOr`, `BitXor`, `Not`,
 use chapa::bitfield;
 
 #[bitfield(u32, order = msb0)]
-#[derive(Copy, Clone)]
-pub struct Msr {
-    #[bits(16, alias = "rnd1")] random1: bool,
-    #[bits(17, alias = "rnd2")] random2: bool,
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct StatusReg {
+    #[bits(0)] enabled: bool,
+    #[bits(1..=7)] flags: u8,
 }
 
-const RESTORE_MASK: u32 = 0x0000_FF73;
+const HIGH_BYTE: u32 = 0xFF00_0000;
+let current = StatusReg::from_raw(0x1234_5678);
+let incoming: u32 = 0xABCD_EF01;
 
-let srr1: u32 = 0x0000_8000;
-let msr = Msr::zeroed();
-
-// No .raw() / from_raw() needed:
-let updated = (msr & !RESTORE_MASK) | (srr1 & RESTORE_MASK);
+// Keep the low 24 bits of `current`, replacing only its high byte.
+let updated = (current & !HIGH_BYTE) | (incoming & HIGH_BYTE);
+assert_eq!(updated.raw(), 0xAB34_5678);
+assert!(updated.enabled());
+assert_eq!(updated.flags(), 0x2B);
 ```
 
 ## Bit extraction
@@ -254,18 +276,23 @@ let masked = extract_bits!(lsb0 u16; val as u16; 0..=3, 12..=15);
 assert_eq!(masked, 0xF00F);
 ```
 
-For chapa bitfield structs, omit the ordering, it is deduced from the struct's `#[bitfield]` definition and the result is returned as the same struct type:
+For chapa bitfield structs, omit the ordering. It is deduced from the struct's
+`#[bitfield]` definition, and the result has the same struct type:
 
 ```rust
 use chapa::{bitfield, extract_bits};
 
 #[bitfield(u32, order = msb0)]
 #[derive(Copy, Clone)]
-pub struct Msr { /* ... */ }
+pub struct Packet {
+    #[bits(0)] priority: bool,
+    #[bits(5..=9)] kind: u8,
+    #[bits(16..=31)] payload: u16,
+}
 
-let msr = Msr::from_raw(0xFFFF_FFFF);
-let masked: Msr = extract_bits!(msr; 0..=0, 5..=9, 16..=31);
-let srr1: u32 = masked.raw();
+let packet = Packet::from_raw(0xFFFF_FFFF);
+let masked: Packet = extract_bits!(packet; 0, 5..=9, 16..=31);
+assert_eq!(masked.raw(), 0x87C0_FFFF);
 ```
 
 The explicit form (`msb0 u32`) emits `const MASK: T = ...`, so the mask is guaranteed to be computed at compile time. The struct form calls an `#[inline]` helper; LLVM should constant-fold the mask in practice, but there is no language-level guarantee.
@@ -277,7 +304,7 @@ Enable the `reflection` feature to get compile-time field metadata for every
 
 ```toml
 [dependencies]
-chapa = { version = "0.5", features = ["reflection"] }
+chapa = { version = "0.6", features = ["reflection"] }
 ```
 
 Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
@@ -288,6 +315,8 @@ storage-value "coordinates"), so a field's value is always
 Nested enum and struct fields carry their own variant table / fields.
 
 ```rust
+# #[cfg(feature = "reflection")]
+# {
 use chapa::{bitfield, BitEnum, FieldKind};
 
 #[derive(Copy, Clone, BitEnum)]
@@ -307,10 +336,13 @@ assert_eq!(mode.width, 2);
 if let FieldKind::Enum(info) = mode.kind {
     assert_eq!(info.name, "Mode");
     assert_eq!(info.variants, &[(0, "Off"), (1, "On"), (3, "Reserved")]);
+} else {
+    panic!("mode should be reflected as an enum");
 }
+# }
 ```
 
-`FieldKind` distinguishes `Bool`, `Uint`, `Enum(&EnumInfo)` and
+`FieldKind` distinguishes `Bool`, `Uint`, `Sint`, `Enum(&EnumInfo)` and
 `Struct(&[FieldInfo])`. The types (`FieldInfo`, `FieldKind`, `EnumInfo`) and the
 `Reflect` trait are re-exported at the crate root when the feature is on.
 

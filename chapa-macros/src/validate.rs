@@ -47,7 +47,7 @@ fn validate_width(def: &BitfieldDef) -> syn::Result<()> {
             format!(
                 "width {} exceeds storage type `{}` capacity of {} bits",
                 def.effective_width,
-                def.args.storage.ident(),
+                def.args.storage.unsigned_ident(),
                 def.args.storage.bit_width()
             ),
         ));
@@ -99,7 +99,7 @@ fn validate_field_types(def: &BitfieldDef) -> Vec<syn::Error> {
                     ));
                 }
             }
-            FieldType::Primitive(sk) => {
+            FieldType::PrimitiveUnsigned(sk) => {
                 if width > sk.bit_width() {
                     errs.push(syn::Error::new(
                         f.range.span,
@@ -107,7 +107,21 @@ fn validate_field_types(def: &BitfieldDef) -> Vec<syn::Error> {
                             "field `{}` range spans {} bits but type `{}` can only hold {} bits",
                             f.accessor_name,
                             width,
-                            sk.ident(),
+                            sk.unsigned_ident(),
+                            sk.bit_width()
+                        ),
+                    ));
+                }
+            }
+            FieldType::PrimitiveSigned(sk) => {
+                if width > sk.bit_width() {
+                    errs.push(syn::Error::new(
+                        f.range.span,
+                        format!(
+                            "field `{}` range spans {} bits but type `{}` can only hold {} bits",
+                            f.accessor_name,
+                            width,
+                            sk.signed_ident(),
                             sk.bit_width()
                         ),
                     ));

@@ -9,6 +9,7 @@
 //! ## Features
 //!
 //! - **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
+//! - **Signed fields**: `i8`...`i128` field types with automatic sign extension
 //! - **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
 //! - **Nested bitfields**: Embed one bitfield struct inside another
 //! - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
@@ -35,14 +36,14 @@
 //! pub struct StatusReg {
 //!     #[bits(0)] enabled: bool,
 //!     #[bits(1..=3)] mode: u8,
-//!     #[bits(4..=7)] _reserved: u8, // Can be omitted; "_" makes it readonly
+//!     #[bits(4..=7)] _reserved: u8, // Leading "_" makes the field readonly
 //! }
 //!
 //! let r = StatusReg::zeroed()
 //!     .with_enabled(true)
 //!     .with_mode(5);
 //!
-//! assert_eq!(r.enabled(), true);
+//! assert!(r.enabled());
 //! assert_eq!(r.mode(), 5);
 //! assert_eq!(r.reserved(), 0); // accessible as `reserved`, not `_reserved`
 //! ```
@@ -67,6 +68,11 @@
 //! | `alias = "name"` | Generate additional accessor under `name` |
 //! | `alias = ["a","b"]` | Multiple aliases |
 //! | `overlay = "group"` | Allow overlap with fields in other overlay groups |
+//!
+//! A field's type may be `bool` (single bit), an unsigned integer (`u8`...`u128`),
+//! a signed integer (`i8`...`i128`, two's-complement: sign-extended on read,
+//! truncated to the field width on write), a `#[derive(BitEnum)]` enum, or another
+//! bitfield struct.
 //!
 //! ## MSB-0 example
 //!
@@ -142,8 +148,15 @@
 //! #[derive(Copy, Clone, Debug, PartialEq)]
 //! pub struct Word {
 //!     #[bits(0..=3)] top: Nibble,
-//!     #[bits(28..=31)] bot: u8,
+//!     #[bits(28..=31)] bottom: u8,
 //! }
+//!
+//! let nibble = Nibble::zeroed().with_high(2).with_low(1);
+//! let word = Word::zeroed().with_top(nibble).with_bottom(0xA);
+//!
+//! assert_eq!(nibble.raw(), 0b1001);
+//! assert_eq!(word.raw(), 0x9000_000A);
+//! assert_eq!(word.top(), nibble);
 //! ```
 //!
 //! ## Overlay groups
@@ -168,6 +181,13 @@
 //!     #[bits(6..=10,  overlay = "i_form")] dst: u8,
 //!     #[bits(11..=31, overlay = "i_form")] imm: u32,
 //! }
+//!
+//! let r_form = Instr::zeroed().with_opcode(0x20).with_rs(3).with_ra(4).with_rb(5);
+//! assert_eq!((r_form.rs(), r_form.ra(), r_form.rb()), (3, 4, 5));
+//!
+//! let i_form = Instr::zeroed().with_opcode(0x08).with_dst(7).with_imm(0x1_2345);
+//! assert_eq!((i_form.dst(), i_form.imm()), (7, 0x1_2345));
+//! assert_eq!(i_form.rs(), i_form.dst()); // Both names cover bits 6..=10
 //! ```
 //!
 //! ## Constructors and default values
@@ -220,11 +240,15 @@
 //!     #[bits(1..=7)] flags: u8,
 //! }
 //!
-//! const MASK: u32 = 0x0000_00FF;
-//! let a = StatusReg::zeroed().with_enabled(true);
-//! let b: u32 = 0x0000_00AA;
+//! const HIGH_BYTE: u32 = 0xFF00_0000;
+//! let current = StatusReg::from_raw(0x1234_5678);
+//! let incoming: u32 = 0xABCD_EF01;
 //!
-//! let result = (a & !MASK) | (b & MASK); // result: StatusReg
+//! // Keep the low 24 bits of `current`, replacing only its high byte.
+//! let updated = (current & !HIGH_BYTE) | (incoming & HIGH_BYTE);
+//! assert_eq!(updated.raw(), 0xAB34_5678);
+//! assert!(updated.enabled());
+//! assert_eq!(updated.flags(), 0x2B);
 //! ```
 //!
 //! ## Bit extraction with `extract_bits!`
@@ -238,15 +262,20 @@
 //!
 //! #[bitfield(u32, order = msb0)]
 //! #[derive(Copy, Clone)]
-//! pub struct Msr { /* ... */ }
+//! pub struct Packet {
+//!     #[bits(0)] priority: bool,
+//!     #[bits(5..=9)] kind: u8,
+//!     #[bits(16..=31)] payload: u16,
+//! }
 //!
-//! let msr = Msr::from_raw(0xFFFF_FFFF);
+//! let packet = Packet::from_raw(0xFFFF_FFFF);
 //!
-//! // Struct form: ordering deduced; returns Msr with non-selected bits zeroed
-//! let masked: Msr = extract_bits!(msr; 0..=0, 5..=9, 16..=31);
+//! // Struct form: ordering deduced; returns Packet with non-selected bits zeroed
+//! let masked: Packet = extract_bits!(packet; 0, 5..=9, 16..=31);
 //!
 //! // Explicit form for raw integers: const-evaluated mask
 //! let raw: u32 = extract_bits!(msb0 u32; 0xFFFF_FFFFu32; 0, 5..=9, 16..=31);
+//! assert_eq!(raw, 0x87C0_FFFF);
 //! assert_eq!(raw, masked.raw());
 //! ```
 //!
@@ -262,7 +291,9 @@
 //! storage-value coordinates), so a field's value is always
 //! `(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
 //!
-//! ```ignore
+//! ```rust
+//! # #[cfg(feature = "reflection")]
+//! # {
 //! use chapa::{bitfield, BitEnum, FieldKind};
 //!
 //! #[derive(Copy, Clone, BitEnum)]
@@ -280,7 +311,10 @@
 //! assert_eq!((mode.offset, mode.width), (1, 2));
 //! if let FieldKind::Enum(info) = mode.kind {
 //!     assert_eq!(info.variants, &[(0, "Off"), (1, "On"), (3, "Reserved")]);
+//! } else {
+//!     panic!("mode should be reflected as an enum");
 //! }
+//! # }
 //! ```
 //!
 //! ## Generated API
@@ -356,6 +390,9 @@ pub mod reflection {
         Bool,
         /// A primitive unsigned integer.
         Uint,
+        /// A primitive signed integer; the field's most significant bit is
+        /// sign-extended when read.
+        Sint,
         /// A `#[derive(BitEnum)]` enum; carries its variant table.
         Enum(&'static EnumInfo),
         /// A nested bitfield struct; carries its own fields for recursion.

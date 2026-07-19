@@ -14,15 +14,16 @@ impl Parse for BitfieldArgs {
         // Parse storage type
         let storage_ident: Ident = input.parse()?;
         let storage_span = storage_ident.span();
-        let storage = StorageKind::from_str(&storage_ident.to_string()).ok_or_else(|| {
-            syn::Error::new(
-                storage_span,
-                format!(
-                    "unsupported storage type `{}`, expected one of: u8, u16, u32, u64, u128",
-                    storage_ident
-                ),
-            )
-        })?;
+        let storage =
+            StorageKind::from_unsigned_str(&storage_ident.to_string()).ok_or_else(|| {
+                syn::Error::new(
+                    storage_span,
+                    format!(
+                        "unsupported storage type `{}`, expected one of: u8, u16, u32, u64, u128",
+                        storage_ident
+                    ),
+                )
+            })?;
 
         let mut order: Option<(BitOrder, Span)> = None;
         let mut width: Option<(u32, Span)> = None;
@@ -188,8 +189,11 @@ fn determine_field_type(ty: &syn::Type) -> FieldType {
             if name == "bool" {
                 return FieldType::Bool;
             }
-            if let Some(sk) = StorageKind::from_str(&name) {
-                return FieldType::Primitive(sk);
+            if let Some(sk) = StorageKind::from_unsigned_str(&name) {
+                return FieldType::PrimitiveUnsigned(sk);
+            }
+            if let Some(sk) = StorageKind::from_signed_str(&name) {
+                return FieldType::PrimitiveSigned(sk);
             }
         }
     }
