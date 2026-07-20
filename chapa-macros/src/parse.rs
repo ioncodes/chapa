@@ -1,7 +1,7 @@
 //! Parsing logic for the `#[bitfield]` attribute and `#[bits(...)]` field annotations.
 
 use proc_macro2::Span;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Ident, LitInt, Token};
@@ -260,8 +260,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
     // forward to the generated struct. Intercepted derives are stripped from each
     // `#[derive(...)]` list; a list left empty is dropped. `#[bitfield]` itself is
     // never forwarded.
-    let mut derives_debug = false;
-    let mut derives_default = false;
+    let mut debug_span = None;
+    let mut default_span = None;
     let mut user_attrs: Vec<proc_macro2::TokenStream> = Vec::new();
     for attr in &item.attrs {
         if attr.path().is_ident("bitfield") {
@@ -271,16 +271,16 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
             let mut kept: Vec<syn::Path> = Vec::new();
             let _ = attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("Debug") {
-                    derives_debug = true;
+                    debug_span = Some(meta.path.span());
                 } else if meta.path.is_ident("Default") {
-                    derives_default = true;
+                    default_span = Some(meta.path.span());
                 } else {
                     kept.push(meta.path.clone());
                 }
                 Ok(())
             });
             if !kept.is_empty() {
-                user_attrs.push(quote! { #[derive(#(#kept),*)] });
+                user_attrs.push(quote_spanned! { attr.span() => #[derive(#(#kept),*)] });
             }
         } else {
             user_attrs.push(quote! { #attr });
@@ -293,8 +293,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
         fields: field_defs,
         vis: item.vis.clone(),
         name: item.ident.clone(),
-        derives_debug,
-        derives_default,
+        debug_span,
+        default_span,
         user_attrs,
     })
 }

@@ -202,8 +202,8 @@ pub struct BitfieldDef {
     /// Non-`#[bitfield]` attributes forwarded to the generated struct, with the
     /// macro-intercepted derives (`Debug`, `Default`) already removed.
     pub user_attrs: Vec<proc_macro2::TokenStream>,
-    /// Whether the struct's derive list contained `Debug` (intercepted).
-    pub derives_debug: bool,
-    /// Whether the struct's derive list contained `Default` (intercepted).
-    pub derives_default: bool,
+    /// Whether the struct's derive list contained `Debug` and where it came from (intercepted).
+    pub debug_span: Option<proc_macro2::Span>,
+    /// Whether the struct's derive list contained `Default` and where it came from (intercepted).
+    pub default_span: Option<proc_macro2::Span>,
 }

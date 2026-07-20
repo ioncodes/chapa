@@ -5,7 +5,7 @@
 //! trait impls.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 
 use crate::model::*;
 use crate::ordering;
@@ -26,11 +26,11 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     let storage_ident = format_ident!("{}", def.args.storage.unsigned_ident());
 
     // The user's `#[derive(Debug)]` / `#[derive(Default)]` are intercepted in
-    // `parse`: these flags drive our own impls (below), and `def.user_attrs` is
-    // the forwarded attribute list with those derives already removed. If a flag
-    // is unset, the corresponding impl is not emitted.
-    let user_derived_debug = def.derives_debug;
-    let user_derived_default = def.derives_default;
+    // `parse`: these spans drive our own impls (below), and `def.user_attrs` is
+    // the forwarded attribute list with those derives already removed. If a span
+    // is None, the corresponding impl is not emitted.
+    let debug_span = &def.debug_span;
+    let default_span = &def.default_span;
     let filtered_attrs = &def.user_attrs;
 
     // Generate struct
@@ -391,8 +391,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     // It applies every field's `default = ...` value; with no defaults declared it
     // is equivalent to `zeroed()`. The stock derive on the newtype would ignore the
     // field defaults entirely, which is why it is intercepted.
-    let default_impl = if user_derived_default {
-        quote! {
+    let default_impl = if let Some(default_span) = default_span {
+        quote_spanned! { *default_span =>
             impl ::core::default::Default for #name {
                 #[inline(always)]
                 fn default() -> Self {
@@ -405,7 +405,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     };
 
     // Only emit a Debug impl when the user opted in with `#[derive(Debug)]`.
-    let debug_impl = if user_derived_debug {
+    let debug_impl = if let Some(debug_span) = debug_span {
         let name_str = name.to_string();
         let debug_fields: Vec<TokenStream> = def
             .fields
@@ -416,7 +416,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 quote! { .field(#field_str, &self.#getter()) }
             })
             .collect();
-        quote! {
+        quote_spanned! { *debug_span =>
             impl ::core::fmt::Debug for #name {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     f.debug_struct(#name_str)
