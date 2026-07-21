@@ -1,7 +1,7 @@
 //! Parsing logic for the `#[bitfield]` attribute and `#[bits(...)]` field annotations.
 
 use proc_macro2::Span;
-use quote::{quote, quote_spanned};
+use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Ident, LitInt, Token};
@@ -280,7 +280,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
                 Ok(())
             });
             if !kept.is_empty() {
-                user_attrs.push(quote_spanned! { attr.span() => #[derive(#(#kept),*)] });
+                let path = attr.path();
+                user_attrs.push(quote! { #[#path(#(#kept),*)] });
             }
         } else {
             user_attrs.push(quote! { #attr });
