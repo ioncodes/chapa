@@ -255,13 +255,12 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
         });
     }
 
-    // In a single pass over the struct attributes, record which derives the macro
-    // intercepts (`Debug`/`Default`, matched as bare paths) and collect the rest to
-    // forward to the generated struct. Intercepted derives are stripped from each
-    // `#[derive(...)]` list; a list left empty is dropped. `#[bitfield]` itself is
-    // never forwarded.
+    // Remove derives that the macro implements itself and forward the rest.
+    // Empty derive attributes and the bitfield attribute are not forwarded.
     let mut debug_span = None;
     let mut default_span = None;
+    let mut copy_span = None;
+    let mut clone_span = None;
     let mut user_attrs: Vec<proc_macro2::TokenStream> = Vec::new();
     for attr in &item.attrs {
         if attr.path().is_ident("bitfield") {
@@ -274,6 +273,10 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
                     debug_span = Some(meta.path.span());
                 } else if meta.path.is_ident("Default") {
                     default_span = Some(meta.path.span());
+                } else if meta.path.is_ident("Copy") {
+                    copy_span = Some(meta.path.span());
+                } else if meta.path.is_ident("Clone") {
+                    clone_span = Some(meta.path.span());
                 } else {
                     kept.push(meta.path.clone());
                 }
@@ -296,6 +299,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
         name: item.ident.clone(),
         debug_span,
         default_span,
+        copy_span,
+        clone_span,
         user_attrs,
     })
 }

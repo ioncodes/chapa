@@ -16,6 +16,7 @@ use crate::ordering;
 /// - A `#[repr(transparent)]` newtype wrapping the storage type.
 /// - `{FIELD}_SHIFT` and `{FIELD}_MASK` associated constants for every field.
 /// - `zeroed()`, `from_raw()`, and `raw()` inherent methods.
+/// - `to_{le,be,ne}_bytes()` / `from_{le,be,ne}_bytes()` inherent methods.
 /// - `field()` getter, `set_field()` setter, and `with_field()` builder for each
 ///   non-readonly field; only the getter for readonly fields.
 /// - Alias methods for every `alias = ...` annotation.
@@ -24,11 +25,11 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     let vis = &def.vis;
     let name = &def.name;
     let storage_ident = format_ident!("{}", def.args.storage.unsigned_ident());
+    let byte_count = (def.args.storage.bit_width() / 8) as usize;
 
-    // The user's `#[derive(Debug)]` / `#[derive(Default)]` are intercepted in
-    // `parse`: these spans drive our own impls (below), and `def.user_attrs` is
-    // the forwarded attribute list with those derives already removed. If a span
-    // is None, the corresponding impl is not emitted.
+    // These derives are removed from the struct because their implementations
+    // are generated below. Copy and Clone are always implemented. Debug remains
+    // opt-in, while a field default also enables Default.
     let debug_span = &def.debug_span;
     let default_span = &def.default_span;
     let filtered_attrs = &def.user_attrs;
@@ -55,7 +56,6 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         };
     };
 
-    // Generate Copy + Clone impls are typically from derive, but user provides via attrs.
     // Generate associated consts and methods
     let mut consts = Vec::new();
     let mut methods = Vec::new();
@@ -387,12 +387,30 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         }
     };
 
-    // Only emit a Default impl when the user opted in with `#[derive(Default)]`.
-    // It applies every field's `default = ...` value; with no defaults declared it
-    // is equivalent to `zeroed()`. The stock derive on the newtype would ignore the
-    // field defaults entirely, which is why it is intercepted.
-    let default_impl = if let Some(default_span) = default_span {
-        quote_spanned! { *default_span =>
+    // BitField requires Copy, so every generated struct implements Copy and Clone.
+    let copy_impl = {
+        let span = def.copy_span.unwrap_or_else(proc_macro2::Span::call_site);
+        quote_spanned! { span =>
+            impl ::core::marker::Copy for #name {}
+        }
+    };
+    let clone_impl = {
+        let span = def.clone_span.unwrap_or_else(proc_macro2::Span::call_site);
+        quote_spanned! { span =>
+            impl ::core::clone::Clone for #name {
+                #[inline(always)]
+                fn clone(&self) -> Self {
+                    *self
+                }
+            }
+        }
+    };
+
+    // A field default automatically enables Default. An explicit derive also
+    // works and returns zeroed() when no field defaults are present.
+    let default_impl = if default_span.is_some() || def.fields.iter().any(|f| f.default.is_some()) {
+        let span = default_span.unwrap_or_else(proc_macro2::Span::call_site);
+        quote_spanned! { span =>
             impl ::core::default::Default for #name {
                 #[inline(always)]
                 fn default() -> Self {
@@ -429,6 +447,33 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         quote! {}
     };
 
+    // Add byte conversions for each byte order.
+    let byte_methods: Vec<TokenStream> = [("le", "little"), ("be", "big"), ("ne", "native")]
+        .iter()
+        .map(|(endian, order)| {
+            let to_fn = format_ident!("to_{}_bytes", endian);
+            let from_fn = format_ident!("from_{}_bytes", endian);
+            let to_doc = format!("Returns the raw storage value as bytes in {order}-endian order.");
+            let from_doc = format!("Creates an instance from bytes in {order}-endian order.");
+            quote! {
+                #[doc = #to_doc]
+                #[inline(always)]
+                #vis const fn #to_fn(self) -> [u8; #byte_count] {
+                    self.0.#to_fn()
+                }
+
+                #[doc = #from_doc]
+                ///
+                /// Preserves the full storage value, including bits outside the
+                /// bitfield width.
+                #[inline(always)]
+                #vis const fn #from_fn(bytes: [u8; #byte_count]) -> Self {
+                    Self(#storage_ident::#from_fn(bytes))
+                }
+            }
+        })
+        .collect();
+
     // Reflection metadata, emitted only under the `reflection` feature. Both
     // branches always compile, so `field_infos` is never unused.
     let reflection_impl = if cfg!(feature = "reflection") {
@@ -455,8 +500,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
 
             /// Creates an instance with all bits set to zero.
             ///
-            /// Field `default = ...` values are applied by `Default::default`
-            /// (when `#[derive(Default)]` is present), not here.
+            /// Field `default = ...` values are applied by `Default::default`,
+            /// not here.
             #[inline(always)]
             #vis const fn zeroed() -> Self {
                 Self(0)
@@ -474,9 +519,13 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 self.0
             }
 
+            #(#byte_methods)*
+
             #(#methods)*
         }
 
+        #copy_impl
+        #clone_impl
         #trait_impl
         #from_impls
         #ops_impls

@@ -13,11 +13,12 @@
 //! - **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
 //! - **Nested bitfields**: Embed one bitfield struct inside another
 //! - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
-//! - **Default values**: Give fields a `default = ...` and `#[derive(Default)]` to bake them in
+//! - **Default values**: Set a field's initial value with `default = ...`
 //! - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 //! - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 //! - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
 //! - **Bit extraction**: [`extract_bits!`] masks a value to keep only the specified bit ranges
+//! - **Bit insertion**: [`place_bits!`] shifts a value into a range, [`insert_bits!`] merges already-positioned bits
 //! - **Reflection**: Opt into the `reflection` feature for compile-time field metadata (`FIELDS`, bit positions, enum variants)
 //!
 //! ## MSRV
@@ -32,7 +33,7 @@
 //!
 //! // An 8-bit status register, bit 0 is the LSB
 //! #[bitfield(u8, order = lsb0)]
-//! #[derive(Copy, Clone, Debug, PartialEq)]
+//! #[derive(Debug, PartialEq)]
 //! pub struct StatusReg {
 //!     #[bits(0)] enabled: bool,
 //!     #[bits(1..=3)] mode: u8,
@@ -192,21 +193,21 @@
 //!
 //! ## Constructors and default values
 //!
-//! Every struct gets a `const fn zeroed()` returning an all-zero instance. There
-//! is no `new()`. To give a field its own starting value, add `default = <expr>`
-//! and `#[derive(Default)]`: the generated `default()` applies those values,
-//! while `zeroed()` and `from_raw` always ignore them.
+//! Every struct has a `const fn zeroed()` that returns an all-zero value. There
+//! is no `new()`. Add `default = <expr>` to give a field a different initial
+//! value. This automatically implements [`Default`]. The `zeroed()` and
+//! `from_raw()` methods do not apply field defaults. If no fields have defaults,
+//! you can still use `#[derive(Default)]` to make `default()` return `zeroed()`.
 //!
 //! Works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum, or
 //! nested bitfield, e.g. `default = Mode::On`), including `readonly` ones;
-//! values wider than the field truncate to its width, like a setter. A `default`
-//! without `#[derive(Default)]` is a compile error, since it would never apply.
+//! values wider than the field truncate to its width, like a setter.
 //!
 //! ```rust
 //! use chapa::bitfield;
 //!
 //! #[bitfield(u16, order = lsb0)]
-//! #[derive(Copy, Clone, Debug, PartialEq, Default)]
+//! #[derive(Debug, PartialEq)]
 //! pub struct Config {
 //!     #[bits(0)] enabled: bool,
 //!     #[bits(1..=3, default = 5)] mode: u8,
@@ -281,6 +282,38 @@
 //!
 //! See the [`extract_bits!`] documentation for full syntax details.
 //!
+//! ## Writing bit ranges with `place_bits!` and `insert_bits!`
+//!
+//! These macros update bit ranges without using field setters:
+//!
+//! - [`place_bits!`] shifts a right-aligned value into one bit or range.
+//! - [`insert_bits!`] copies already-positioned bits into one or more ranges.
+//!
+//! Both macros support explicit `msb0` and `lsb0` forms. With a bitfield value,
+//! the ordering is inferred. They return the updated value instead of changing
+//! it in place.
+//!
+//! ```rust
+//! use chapa::{bitfield, place_bits, insert_bits};
+//!
+//! #[bitfield(u32, order = lsb0)]
+//! pub struct Reg {
+//!     #[bits(0..=7)] b0: u8,
+//!     #[bits(8..=15)] b1: u8,
+//!     #[bits(16..=31)] hi: u16,
+//! }
+//!
+//! // Write 0xAB to bits 8..=15.
+//! let mut reg = Reg::from_raw(0xDEAD_0000);
+//! reg = place_bits!(reg; 8..=15; 0xABu8);
+//! assert_eq!(reg.b1(), 0xAB);
+//! assert_eq!(reg.hi(), 0xDEAD);
+//!
+//! // Replace the low two bytes with already-positioned bits.
+//! reg = insert_bits!(reg; 0x0000_1234u32; 0..=15);
+//! assert_eq!(reg.raw(), 0xDEAD_1234);
+//! ```
+//!
 //! ## Reflection
 //!
 //! Enable the `reflection` feature to get compile-time field metadata for every
@@ -292,8 +325,6 @@
 //! `(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
 //!
 //! ```rust
-//! # #[cfg(feature = "reflection")]
-//! # {
 //! use chapa::{bitfield, BitEnum, FieldKind};
 //!
 //! #[derive(Copy, Clone, BitEnum)]
@@ -314,7 +345,6 @@
 //! } else {
 //!     panic!("mode should be reflected as an enum");
 //! }
-//! # }
 //! ```
 //!
 //! ## Generated API
@@ -328,6 +358,23 @@
 //! | Getter | `pub const fn foo(&self) -> u8` |
 //! | Setter | `pub const fn set_foo(&mut self, val: u8)` |
 //! | Builder | `pub const fn with_foo(self, val: u8) -> Self` |
+//!
+//! Every struct also provides these methods (`N` is the storage size in bytes):
+//!
+//! | Item | Signature |
+//! |---|---|
+//! | Zeroed | `pub const fn zeroed() -> Self` |
+//! | Raw access | `pub const fn from_raw(val: StorageType) -> Self` |
+//! | Raw access | `pub const fn raw(&self) -> StorageType` |
+//! | Bytes | `pub const fn to_le_bytes(self) -> [u8; N]` |
+//! | Bytes | `pub const fn to_be_bytes(self) -> [u8; N]` |
+//! | Bytes | `pub const fn to_ne_bytes(self) -> [u8; N]` |
+//! | Bytes | `pub const fn from_le_bytes(bytes: [u8; N]) -> Self` |
+//! | Bytes | `pub const fn from_be_bytes(bytes: [u8; N]) -> Self` |
+//! | Bytes | `pub const fn from_ne_bytes(bytes: [u8; N]) -> Self` |
+//!
+//! The byte conversions operate on the full storage value, matching `raw()`
+//! and `from_raw()`.
 //!
 //! Additionally, every struct implements the following traits:
 //!

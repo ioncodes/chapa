@@ -179,8 +179,8 @@ pub struct FieldDef {
     pub overlay: Option<String>,
     /// Default value expression declared with `default = ...`, if any.
     ///
-    /// Applied by the generated `Default::default()`, which requires the struct to
-    /// `#[derive(Default)]`. Supported on any field type.
+    /// Applied by `Default::default()`. Setting a field default automatically
+    /// implements `Default` for the struct.
     pub default: Option<syn::Expr>,
     /// Source span of the field identifier (for error reporting).
     pub span: Span,
@@ -199,11 +199,15 @@ pub struct BitfieldDef {
     pub vis: syn::Visibility,
     /// Name of the original struct.
     pub name: syn::Ident,
-    /// Non-`#[bitfield]` attributes forwarded to the generated struct, with the
-    /// macro-intercepted derives (`Debug`, `Default`) already removed.
+    /// Attributes forwarded to the generated struct. Derives implemented by the
+    /// macro have already been removed.
     pub user_attrs: Vec<proc_macro2::TokenStream>,
-    /// Whether the struct's derive list contained `Debug` and where it came from (intercepted).
+    /// Location of a user-written `Debug` derive.
     pub debug_span: Option<proc_macro2::Span>,
-    /// Whether the struct's derive list contained `Default` and where it came from (intercepted).
+    /// Location of a user-written `Default` derive.
     pub default_span: Option<proc_macro2::Span>,
+    /// Location of a user-written `Copy` derive.
+    pub copy_span: Option<proc_macro2::Span>,
+    /// Location of a user-written `Clone` derive.
+    pub clone_span: Option<proc_macro2::Span>,
 }

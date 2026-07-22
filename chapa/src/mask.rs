@@ -70,6 +70,18 @@ macro_rules! __bits_pairs {
     };
 }
 
+/// Builds the compile-time mask used by the explicit macro forms.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __const_mask {
+    (msb0 $ty:ty; $($specs:tt)*) => {
+        $crate::mask::msb0_mask(<$ty>::BITS, &$crate::__bits_pairs!($($specs)*)) as $ty
+    };
+    (lsb0 $ty:ty; $($specs:tt)*) => {
+        $crate::mask::lsb0_mask(&$crate::__bits_pairs!($($specs)*)) as $ty
+    };
+}
+
 /// Compute the mask for a chapa bitfield struct, using ordering and width from its [`BitField`] impl.
 ///
 /// Used by the no-prefix form of [`extract_bits!`].
@@ -98,6 +110,46 @@ where
     T: core::ops::BitAnd<T::Storage, Output = T>,
 {
     val & extract_mask::<T>(ranges)
+}
+
+/// Copies already-positioned bits from `src` into selected ranges of `dst`.
+///
+/// This supports the bitfield form of [`insert_bits!`]. Bits outside the ranges
+/// keep their value from `dst`.
+///
+#[inline]
+pub fn insert_bits_auto<T>(dst: T, src: T::Storage, ranges: &[(u8, u8)]) -> T
+where
+    T: crate::BitField
+        + core::ops::BitAnd<T::Storage, Output = T>
+        + core::ops::BitOr<T::Storage, Output = T>,
+    T::Storage: core::ops::BitAnd<Output = T::Storage> + core::ops::Not<Output = T::Storage>,
+{
+    let mask = extract_mask::<T>(ranges);
+    (dst & !mask) | (src & mask)
+}
+
+/// Shifts a right-aligned value into the range `lo..=hi` of `dst`.
+///
+/// This supports the bitfield form of [`place_bits!`]. Bits above the range's
+/// width are dropped.
+///
+#[inline]
+pub fn place_bits_auto<T>(dst: T, lo: u8, hi: u8, val: T::Storage) -> T
+where
+    T: crate::BitField
+        + core::ops::BitAnd<T::Storage, Output = T>
+        + core::ops::BitOr<T::Storage, Output = T>,
+    T::Storage: core::ops::BitAnd<Output = T::Storage>
+        + core::ops::Not<Output = T::Storage>
+        + core::ops::Shl<u32, Output = T::Storage>,
+{
+    let shift = if T::IS_MSB0 {
+        <T::Storage as crate::BitStorage>::BITS - 1 - hi as u32
+    } else {
+        lo as u32
+    };
+    insert_bits_auto(dst, val << shift, &[(lo, hi)])
 }
 
 /// Keep only the specified bits from a value.
@@ -144,21 +196,153 @@ where
 macro_rules! extract_bits {
     // Explicit MSB0 with type: extract_bits!(msb0 u32; val; specs...)
     (msb0 $ty:ty; $val:expr; $($specs:tt)*) => {{
-        const MASK: $ty = $crate::mask::msb0_mask(
-            <$ty>::BITS,
-            &$crate::__bits_pairs!($($specs)*),
-        ) as $ty;
+        const MASK: $ty = $crate::__const_mask!(msb0 $ty; $($specs)*);
         ($val) & MASK
     }};
     // Explicit LSB0 with type: extract_bits!(lsb0 u8; val; specs...)
     (lsb0 $ty:ty; $val:expr; $($specs:tt)*) => {{
-        const MASK: $ty = $crate::mask::lsb0_mask(
-            &$crate::__bits_pairs!($($specs)*),
-        ) as $ty;
+        const MASK: $ty = $crate::__const_mask!(lsb0 $ty; $($specs)*);
         ($val) & MASK
     }};
     // Chapa struct (ordering deduced): extract_bits!(struct_val; specs...)
     ($val:expr; $($specs:tt)*) => {
         $crate::mask::extract_bits_auto($val, &$crate::__bits_pairs!($($specs)*))
+    };
+}
+
+/// Copies already-positioned bits into selected ranges of a value.
+///
+/// Bits outside the selected ranges keep their value from `dst`. The bits in
+/// `src` must already be in the correct position. Use [`place_bits!`] to shift a
+/// right-aligned value into one range.
+///
+/// You can list multiple bits and inclusive ranges.
+///
+/// # Syntax
+///
+/// ```
+/// # use chapa::insert_bits;
+/// let dst: u32 = 0x0000_0000;
+/// let src: u32 = 0xFFFF_FFFF;
+///
+/// // MSB0 ordering: replace bits 0 and 16..=31 of `dst` with those of `src`
+/// let merged = insert_bits!(msb0 u32; dst; src; 0, 16..=31);
+/// assert_eq!(merged, 0x8000_FFFF);
+///
+/// // LSB0 ordering: replace bits 0..=3 and 8..=15
+/// let merged = insert_bits!(lsb0 u32; dst; src; 0..=3, 8..=15);
+/// assert_eq!(merged, 0x0000_FF0F);
+/// ```
+///
+/// For bitfield values, omit the ordering and storage type. Pass `src` as a raw
+/// storage value:
+///
+/// ```
+/// # use chapa::{bitfield, insert_bits};
+/// # #[bitfield(u32, order = msb0)]
+/// # struct Reg {
+/// #     #[bits(0..=7)] a: u8,
+/// #     #[bits(8..=31)] b: u32,
+/// # }
+/// let reg = Reg::from_raw(0x1234_5678);
+/// let updated = insert_bits!(reg; 0xFF00_0000u32; 0..=7);
+/// assert_eq!(updated.raw(), 0xFF34_5678);
+/// ```
+///
+/// The explicit `msb0` and `lsb0` forms compute the mask at compile time.
+///
+/// The bitfield form uses the full storage width for `msb0`. If the bitfield has
+/// `width = N`, use the explicit `msb0` form instead.
+///
+#[macro_export]
+macro_rules! insert_bits {
+    // Explicit MSB0 with type: insert_bits!(msb0 u32; dst; src; specs...)
+    (msb0 $ty:ty; $dst:expr; $src:expr; $($specs:tt)*) => {{
+        const MASK: $ty = $crate::__const_mask!(msb0 $ty; $($specs)*);
+        (($dst) & !MASK) | (($src) & MASK)
+    }};
+    // Explicit LSB0 with type: insert_bits!(lsb0 u8; dst; src; specs...)
+    (lsb0 $ty:ty; $dst:expr; $src:expr; $($specs:tt)*) => {{
+        const MASK: $ty = $crate::__const_mask!(lsb0 $ty; $($specs)*);
+        (($dst) & !MASK) | (($src) & MASK)
+    }};
+    // Bitfield form: insert_bits!(value; raw_src; specs...)
+    ($dst:expr; $src:expr; $($specs:tt)*) => {
+        $crate::mask::insert_bits_auto($dst, ($src as _), &$crate::__bits_pairs!($($specs)*))
+    };
+}
+
+/// Shift a right-aligned value into a single bit range of a value.
+///
+/// The value is masked to the range width, shifted into position, and written
+/// over `dst`. Bits outside the range keep their value from `dst`.
+///
+/// This macro accepts one bit `N` or one inclusive range `N..=M`.
+///
+/// # Syntax
+///
+/// ```
+/// # use chapa::place_bits;
+/// let reg: u32 = 0;
+///
+/// // LSB0: write 0xAB into bits 8..=15.
+/// let reg = place_bits!(lsb0 u32; reg; 8..=15; 0xABu8);
+/// assert_eq!(reg, 0x0000_AB00);
+///
+/// // MSB0: write the same value with bits numbered from the MSB.
+/// let reg = place_bits!(msb0 u32; 0u32; 8..=15; 0xABu8);
+/// assert_eq!(reg, 0x00AB_0000);
+///
+/// // A single bit
+/// let reg = place_bits!(lsb0 u8; 0u8; 3; 1u8);
+/// assert_eq!(reg, 0b0000_1000);
+/// ```
+///
+/// For bitfield values, omit the ordering and storage type:
+///
+/// ```
+/// # use chapa::{bitfield, place_bits};
+/// # #[bitfield(u32, order = lsb0)]
+/// # struct Reg {
+/// #     #[bits(0..=7)] lo: u8,
+/// #     #[bits(8..=15)] mid: u8,
+/// #     #[bits(16..=31)] hi: u16,
+/// # }
+/// let reg = Reg::zeroed();
+/// let reg = place_bits!(reg; 8..=15; 0xABu8);
+/// assert_eq!(reg.mid(), 0xAB);
+/// ```
+///
+/// Values wider than the range are truncated to the range width, like a field setter.
+///
+/// The explicit forms compute the mask at compile time. For an `msb0` bitfield
+/// with `width = N`, use the explicit form.
+#[macro_export]
+macro_rules! place_bits {
+    // Explicit MSB0, range: place_bits!(msb0 u32; dst; lo..=hi; val)
+    (msb0 $ty:ty; $dst:expr; $lo:literal ..= $hi:literal; $val:expr) => {{
+        const MASK: $ty = $crate::__const_mask!(msb0 $ty; $lo ..= $hi);
+        const SHIFT: u32 = <$ty>::BITS - 1 - ($hi as u32);
+        (($dst) & !MASK) | ((($val as $ty) << SHIFT) & MASK)
+    }};
+    // Explicit LSB0, range: place_bits!(lsb0 u32; dst; lo..=hi; val)
+    (lsb0 $ty:ty; $dst:expr; $lo:literal ..= $hi:literal; $val:expr) => {{
+        const MASK: $ty = $crate::__const_mask!(lsb0 $ty; $lo ..= $hi);
+        const SHIFT: u32 = $lo as u32;
+        (($dst) & !MASK) | ((($val as $ty) << SHIFT) & MASK)
+    }};
+    // Bitfield range: place_bits!(dst; lo..=hi; val)
+    ($dst:expr; $lo:literal ..= $hi:literal; $val:expr) => {
+        $crate::mask::place_bits_auto($dst, $lo, $hi, ($val as _))
+    };
+    // Single bit forms normalize to `bit ..= bit` and forward to the range arms.
+    (msb0 $ty:ty; $dst:expr; $bit:literal; $val:expr) => {
+        $crate::place_bits!(msb0 $ty; $dst; $bit ..= $bit; $val)
+    };
+    (lsb0 $ty:ty; $dst:expr; $bit:literal; $val:expr) => {
+        $crate::place_bits!(lsb0 $ty; $dst; $bit ..= $bit; $val)
+    };
+    ($dst:expr; $bit:literal; $val:expr) => {
+        $crate::place_bits!($dst; $bit ..= $bit; $val)
     };
 }
