@@ -210,7 +210,7 @@ fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
 /// Checks that `default = ...` only appears when the struct `#[derive(Default)]`s,
 /// since the value is applied solely through the generated `Default` impl.
 fn validate_defaults(def: &BitfieldDef) -> Vec<syn::Error> {
-    if def.derives_default {
+    if def.default_span.is_some() {
         return Vec::new();
     }
     def.fields
