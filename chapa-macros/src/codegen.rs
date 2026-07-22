@@ -17,6 +17,8 @@ use crate::ordering;
 /// - `{FIELD}_SHIFT` and `{FIELD}_MASK` associated constants for every field.
 /// - `zeroed()`, `from_raw()`, and `raw()` inherent methods.
 /// - `to_{le,be,ne}_bytes()` / `from_{le,be,ne}_bytes()` inherent methods.
+/// - `{wrapping,saturating,checked,overflowing}_{add,sub}()` inherent methods
+///   operating on the raw storage value.
 /// - `field()` getter, `set_field()` setter, and `with_field()` builder for each
 ///   non-readonly field; only the getter for readonly fields.
 /// - Alias methods for every `alias = ...` annotation.
@@ -447,6 +449,75 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         quote! {}
     };
 
+    // Arithmetic on the raw storage value: wrapping, saturating, checked, and
+    // overflowing add/sub. These operate on the full storage value like `raw()`,
+    // so carries and borrows propagate across field boundaries.
+    let arith_methods: Vec<TokenStream> = [("add", "addition"), ("sub", "subtraction")]
+        .iter()
+        .map(|(op, op_doc)| {
+            let wrapping_fn = format_ident!("wrapping_{}", op);
+            let saturating_fn = format_ident!("saturating_{}", op);
+            let checked_fn = format_ident!("checked_{}", op);
+            let overflowing_fn = format_ident!("overflowing_{}", op);
+            let wrapping_doc =
+                format!("Wrapping (modular) {op_doc} on the raw storage value.");
+            let saturating_doc = format!(
+                "Saturating {op_doc} on the raw storage value, clamping at the storage bounds."
+            );
+            let checked_doc = format!(
+                "Checked {op_doc} on the raw storage value, returning `None` on overflow."
+            );
+            let overflowing_doc = format!(
+                "Overflowing {op_doc} on the raw storage value, returning the wrapped result and whether overflow occurred."
+            );
+            quote! {
+                #[doc = #wrapping_doc]
+                ///
+                /// Operates on the full storage value, so carries and borrows
+                /// propagate across field boundaries.
+                #[inline(always)]
+                #[must_use]
+                #vis const fn #wrapping_fn(self, rhs: #storage_ident) -> Self {
+                    Self(self.0.#wrapping_fn(rhs))
+                }
+
+                #[doc = #saturating_doc]
+                ///
+                /// Operates on the full storage value, so carries and borrows
+                /// propagate across field boundaries.
+                #[inline(always)]
+                #[must_use]
+                #vis const fn #saturating_fn(self, rhs: #storage_ident) -> Self {
+                    Self(self.0.#saturating_fn(rhs))
+                }
+
+                #[doc = #checked_doc]
+                ///
+                /// Operates on the full storage value, so carries and borrows
+                /// propagate across field boundaries.
+                #[inline(always)]
+                #[must_use]
+                #vis const fn #checked_fn(self, rhs: #storage_ident) -> Option<Self> {
+                    match self.0.#checked_fn(rhs) {
+                        Some(val) => Some(Self(val)),
+                        None => None,
+                    }
+                }
+
+                #[doc = #overflowing_doc]
+                ///
+                /// Operates on the full storage value, so carries and borrows
+                /// propagate across field boundaries.
+                #[inline(always)]
+                #[must_use]
+                #vis const fn #overflowing_fn(self, rhs: #storage_ident) -> (Self, bool) {
+                    let (val, overflowed) = self.0.#overflowing_fn(rhs);
+                    (Self(val), overflowed)
+                }
+            }
+        })
+        .collect();
+
     // Add byte conversions for each byte order.
     let byte_methods: Vec<TokenStream> = [("le", "little"), ("be", "big"), ("ne", "native")]
         .iter()
@@ -520,6 +591,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             }
 
             #(#byte_methods)*
+
+            #(#arith_methods)*
 
             #(#methods)*
         }

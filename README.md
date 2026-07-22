@@ -20,6 +20,7 @@ range of bits and gets a generated getter, setter, and `with_*` builder.
 - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
 - **Bitwise operators**: `&`, `|`, `^`, `!`, `&=`, `|=`, `^=` with the backing storage type work directly on the struct
+- **Raw arithmetic**: `wrapping_`, `saturating_`, `checked_`, and `overflowing_` variants of `add`/`sub` on the raw storage value
 - **Bit extraction**: `extract_bits!` masks a value to keep only the specified bit ranges
 - **Bit insertion**: `place_bits!` shifts a value into a range, `insert_bits!` merges already-positioned bits
 - **Reflection**: Opt into the `reflection` feature for compile-time field metadata (`FIELDS`, bit positions, enum variants)
@@ -256,6 +257,43 @@ assert!(updated.enabled());
 assert_eq!(updated.flags(), 0x2B);
 ```
 
+## Raw arithmetic
+
+Every bitfield struct provides `wrapping_add`, `wrapping_sub`, `saturating_add`,
+`saturating_sub`, `checked_add`, `checked_sub`, `overflowing_add`, and
+`overflowing_sub`, mirroring the methods on the backing storage type. They
+operate on the full raw storage value, exactly like `raw()`: carries and
+borrows propagate across field boundaries, and bit ordering plays no role.
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Counter {
+    #[bits(0..=7)] low: u8,
+    #[bits(8..=15)] high: u8,
+}
+
+let c = Counter::from_raw(0xFFFF).wrapping_add(1);
+assert_eq!(c.raw(), 0x0000);
+
+// Carries cross field boundaries, just like on the raw integer.
+let c = Counter::from_raw(0x00FF).wrapping_add(1);
+assert_eq!((c.low(), c.high()), (0x00, 0x01));
+
+assert_eq!(Counter::from_raw(0xFFFF).checked_add(1), None);
+assert_eq!(Counter::from_raw(0x0005).saturating_sub(0x10).raw(), 0x0000);
+
+let (c, borrowed) = Counter::from_raw(0x0000).overflowing_sub(1);
+assert_eq!(c.raw(), 0xFFFF);
+assert!(borrowed);
+```
+
+If you need wrap-around at a single field's width instead, the setters already
+truncate to the field width, so `c.set_low(c.low().wrapping_add(1))` wraps
+correctly within `low` alone.
+
 ## Bit extraction
 
 `extract_bits!` keeps only the specified bit positions from a value, zeroing all others.
@@ -404,9 +442,12 @@ Every struct also provides these methods (`N` is the storage size in bytes):
 | Bytes      | `pub const fn from_le_bytes(bytes: [u8; N]) -> Self` |
 | Bytes      | `pub const fn from_be_bytes(bytes: [u8; N]) -> Self` |
 | Bytes      | `pub const fn from_ne_bytes(bytes: [u8; N]) -> Self` |
+| Arithmetic | `pub const fn wrapping_add(self, rhs: StorageType) -> Self` (same shape for `wrapping_sub`, `saturating_add`, `saturating_sub`) |
+| Arithmetic | `pub const fn checked_add(self, rhs: StorageType) -> Option<Self>` (same shape for `checked_sub`) |
+| Arithmetic | `pub const fn overflowing_add(self, rhs: StorageType) -> (Self, bool)` (same shape for `overflowing_sub`) |
 
-The byte conversions operate on the full storage value, matching `raw()` and
-`from_raw()`.
+The byte conversions and arithmetic methods operate on the full storage value,
+matching `raw()` and `from_raw()`.
 
 Additionally, every struct implements the following traits:
 
