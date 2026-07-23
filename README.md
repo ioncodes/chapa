@@ -375,13 +375,13 @@ assert_eq!(reg.b1(), 0xAB);
 assert_eq!(reg.hi(), 0xDEAD);
 
 // Replace the low two bytes with already-positioned bits.
-reg = insert_bits!(reg; 0x0000_1234u32; 0..=15);
+reg = insert_bits!(reg; 0..=15; 0x0000_1234u32);
 assert_eq!(reg.raw(), 0xDEAD_1234);
 ```
 
-The explicit forms compute their masks at compile time. For an `msb0` bitfield
-with `width = N`, use the explicit form because the inferred form uses the full
-storage width.
+The explicit forms remain const-evaluable with literal specs. For an `msb0`
+bitfield with `width = N`, use the explicit form because the inferred form uses
+the full storage width.
 
 ## Reflection
 

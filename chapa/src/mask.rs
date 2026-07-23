@@ -342,6 +342,37 @@ macro_rules! extract_bits {
     };
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __insert_bits_range_first {
+    (@msb [$ty:ty] [$dst:expr] [$($specs:tt)*] ; $src:expr) => {{
+        let mask: $ty = $crate::__const_mask!(msb0 $ty; $($specs)*);
+        (($dst) & !mask) | (($src) & mask)
+    }};
+    (@lsb [$ty:ty] [$dst:expr] [$($specs:tt)*] ; $src:expr) => {{
+        let mask: $ty = $crate::__const_mask!(lsb0 $ty; $($specs)*);
+        (($dst) & !mask) | (($src) & mask)
+    }};
+    (@auto [$dst:expr] [$($specs:tt)*] ; $src:expr) => {
+        $crate::mask::insert_bits_auto($dst, ($src as _), &$crate::__bits_pairs!($($specs)*))
+    };
+    (@msb [$ty:ty] [$dst:expr] [$($specs:tt)*] $next:tt $($rest:tt)*) => {
+        $crate::__insert_bits_range_first!(
+            @msb [$ty] [$dst] [$($specs)* $next] $($rest)*
+        )
+    };
+    (@lsb [$ty:ty] [$dst:expr] [$($specs:tt)*] $next:tt $($rest:tt)*) => {
+        $crate::__insert_bits_range_first!(
+            @lsb [$ty] [$dst] [$($specs)* $next] $($rest)*
+        )
+    };
+    (@auto [$dst:expr] [$($specs:tt)*] $next:tt $($rest:tt)*) => {
+        $crate::__insert_bits_range_first!(
+            @auto [$dst] [$($specs)* $next] $($rest)*
+        )
+    };
+}
+
 /// Copies already-positioned bits into selected ranges of a value.
 ///
 /// Bits outside the selected ranges keep their value from `dst`. The bits in
@@ -360,11 +391,11 @@ macro_rules! extract_bits {
 /// let src: u32 = 0xFFFF_FFFF;
 ///
 /// // MSB0 ordering: replace bits 0 and 16..=31 of `dst` with those of `src`
-/// let merged = insert_bits!(msb0 u32; dst; src; 0, 16..=31);
+/// let merged = insert_bits!(msb0 u32; dst; 0, 16..=31; src);
 /// assert_eq!(merged, 0x8000_FFFF);
 ///
 /// // LSB0 ordering: replace bits 0..=3 and 8..=15
-/// let merged = insert_bits!(lsb0 u32; dst; src; 0..=3, 8..=15);
+/// let merged = insert_bits!(lsb0 u32; dst; 0..=3, 8..=15; src);
 /// assert_eq!(merged, 0x0000_FF0F);
 /// ```
 ///
@@ -379,7 +410,7 @@ macro_rules! extract_bits {
 /// #     #[bits(8..=31)] b: u32,
 /// # }
 /// let reg = Reg::from_raw(0x1234_5678);
-/// let updated = insert_bits!(reg; 0xFF00_0000u32; 0..=7);
+/// let updated = insert_bits!(reg; 0..=7; 0xFF00_0000u32);
 /// assert_eq!(updated.raw(), 0xFF34_5678);
 /// ```
 ///
@@ -391,19 +422,16 @@ macro_rules! extract_bits {
 ///
 #[macro_export]
 macro_rules! insert_bits {
-    // Explicit MSB0 with type: insert_bits!(msb0 u32; dst; src; specs...)
-    (msb0 $ty:ty; $dst:expr; $src:expr; $($specs:tt)*) => {{
-        let mask: $ty = $crate::__const_mask!(msb0 $ty; $($specs)*);
-        (($dst) & !mask) | (($src) & mask)
-    }};
-    // Explicit LSB0 with type: insert_bits!(lsb0 u8; dst; src; specs...)
-    (lsb0 $ty:ty; $dst:expr; $src:expr; $($specs:tt)*) => {{
-        let mask: $ty = $crate::__const_mask!(lsb0 $ty; $($specs)*);
-        (($dst) & !mask) | (($src) & mask)
-    }};
-    // Bitfield form: insert_bits!(value; raw_src; specs...)
-    ($dst:expr; $src:expr; $($specs:tt)*) => {
-        $crate::mask::insert_bits_auto($dst, ($src as _), &$crate::__bits_pairs!($($specs)*))
+    // Explicit forms: insert_bits!(order type; dst; specs...; src)
+    (msb0 $ty:ty; $dst:expr; $($tail:tt)*) => {
+        $crate::__insert_bits_range_first!(@msb [$ty] [$dst] [] $($tail)*)
+    };
+    (lsb0 $ty:ty; $dst:expr; $($tail:tt)*) => {
+        $crate::__insert_bits_range_first!(@lsb [$ty] [$dst] [] $($tail)*)
+    };
+    // Bitfield form: insert_bits!(dst; specs...; raw_src)
+    ($dst:expr; $($tail:tt)*) => {
+        $crate::__insert_bits_range_first!(@auto [$dst] [] $($tail)*)
     };
 }
 

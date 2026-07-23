@@ -352,7 +352,7 @@
 //! assert_eq!(reg.hi(), 0xDEAD);
 //!
 //! // Replace the low two bytes with already-positioned bits.
-//! reg = insert_bits!(reg; 0x0000_1234u32; 0..=15);
+//! reg = insert_bits!(reg; 0..=15; 0x0000_1234u32);
 //! assert_eq!(reg.raw(), 0xDEAD_1234);
 //! ```
 //!
