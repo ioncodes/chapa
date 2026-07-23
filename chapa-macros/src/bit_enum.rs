@@ -153,6 +153,15 @@ pub fn generate(item: ItemEnum) -> syn::Result<TokenStream> {
         }
     };
 
+    let operand_impl = quote! {
+        impl #impl_generics ::chapa::BitOperand<#storage_ident> for #name #ty_generics #where_clause {
+            #[inline(always)]
+            fn into_storage(self) -> #storage_ident {
+                self as #storage_ident
+            }
+        }
+    };
+
     let from_raw_arms = resolved.iter().map(|(ident, value)| {
         let lit = syn::LitInt::new(&value.to_string(), ident.span());
         quote! { #lit => #name::#ident, }
@@ -189,6 +198,7 @@ pub fn generate(item: ItemEnum) -> syn::Result<TokenStream> {
 
         #copy_impl
         #clone_impl
+        #operand_impl
 
         impl #impl_generics ::chapa::BitField for #name #ty_generics #where_clause {
             type Storage = #storage_ident;

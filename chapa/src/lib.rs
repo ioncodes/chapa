@@ -233,7 +233,9 @@
 //! [`BitOr`](core::ops::BitOr), [`BitXor`](core::ops::BitXor),
 //! [`Not`](core::ops::Not), [`BitAndAssign`](core::ops::BitAndAssign),
 //! [`BitOrAssign`](core::ops::BitOrAssign), and
-//! [`BitXorAssign`](core::ops::BitXorAssign) against its backing storage type.
+//! [`BitXorAssign`](core::ops::BitXorAssign). The right-hand operand may be the
+//! raw storage type or any bitfield backed by the same storage type; the result
+//! keeps the left-hand bitfield type.
 //!
 //! ```rust
 //! use chapa::bitfield;
@@ -425,15 +427,18 @@
 //!
 //! Additionally, every struct implements the following traits:
 //!
-//! | Trait             | Signature                                            |
-//! |-------------------|------------------------------------------------------|
-//! | `BitAnd`          | `fn bitand(self, rhs: StorageType) -> Self`          |
-//! | `BitOr`           | `fn bitor(self, rhs: StorageType) -> Self`           |
-//! | `BitXor`          | `fn bitxor(self, rhs: StorageType) -> Self`          |
-//! | `Not`             | `fn not(self) -> Self`                               |
-//! | `BitAndAssign`    | `fn bitand_assign(&mut self, rhs: StorageType)`      |
-//! | `BitOrAssign`     | `fn bitor_assign(&mut self, rhs: StorageType)`       |
-//! | `BitXorAssign`    | `fn bitxor_assign(&mut self, rhs: StorageType)`      |
+//! | Trait             | Signature                                        |
+//! |-------------------|--------------------------------------------------|
+//! | `BitAnd`          | `fn bitand<Rhs>(self, rhs: Rhs) -> Self`        |
+//! | `BitOr`           | `fn bitor<Rhs>(self, rhs: Rhs) -> Self`         |
+//! | `BitXor`          | `fn bitxor<Rhs>(self, rhs: Rhs) -> Self`        |
+//! | `Not`             | `fn not(self) -> Self`                          |
+//! | `BitAndAssign`    | `fn bitand_assign<Rhs>(&mut self, rhs: Rhs)`    |
+//! | `BitOrAssign`     | `fn bitor_assign<Rhs>(&mut self, rhs: Rhs)`     |
+//! | `BitXorAssign`    | `fn bitxor_assign<Rhs>(&mut self, rhs: Rhs)`    |
+//!
+//! `Rhs` may be the backing storage type or a bitfield with the same backing
+//! storage type.
 
 #![no_std]
 
@@ -524,6 +529,14 @@ pub trait BitStorage: Copy + Sized {
     fn from_u128(v: u128) -> Self;
 }
 
+/// Converts a raw integer or bitfield value into its backing storage for
+/// generated bitwise operator implementations.
+#[doc(hidden)]
+pub trait BitOperand<S: BitStorage> {
+    /// Returns the raw storage value used by the bitwise operation.
+    fn into_storage(self) -> S;
+}
+
 /// Trait implemented by every struct produced by the [`bitfield`] macro and
 /// every enum annotated with `#[bitenum]`.
 ///
@@ -599,6 +612,21 @@ macro_rules! impl_bit_storage {
                 const ZERO: Self = 0;
                 #[inline(always)]
                 fn from_u128(v: u128) -> Self { v as $ty }
+            }
+
+            impl BitOperand<$ty> for $ty {
+                #[inline(always)]
+                fn into_storage(self) -> $ty { self }
+            }
+
+            impl BitOperand<$ty> for i32 {
+                #[inline(always)]
+                fn into_storage(self) -> $ty {
+                    match <$ty>::try_from(self) {
+                        Ok(value) => value,
+                        Err(_) => panic!("bitwise operand does not fit in storage type"),
+                    }
+                }
             }
         )*
     };

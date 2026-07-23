@@ -354,41 +354,79 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 val.0
             }
         }
+
+        impl ::chapa::BitOperand<#storage_ident> for #name {
+            #[inline(always)]
+            fn into_storage(self) -> #storage_ident {
+                self.0
+            }
+        }
     };
 
-    // Bitwise ops: &, |, ^, ! with the raw storage type
+    // Bitwise ops accept the raw storage type or any bitfield with identical
+    // storage. The left-hand type determines the output type.
     let ops_impls = quote! {
-        impl ::core::ops::BitAnd<#storage_ident> for #name {
+        impl<Rhs> ::core::ops::BitAnd<Rhs> for #name
+        where
+            Rhs: ::chapa::BitOperand<#storage_ident>,
+        {
             type Output = Self;
             #[inline(always)]
-            fn bitand(self, rhs: #storage_ident) -> Self { Self(self.0 & rhs) }
+            fn bitand(self, rhs: Rhs) -> Self {
+                Self(self.0 & ::chapa::BitOperand::into_storage(rhs))
+            }
         }
-        impl ::core::ops::BitOr<#storage_ident> for #name {
+        impl<Rhs> ::core::ops::BitOr<Rhs> for #name
+        where
+            Rhs: ::chapa::BitOperand<#storage_ident>,
+        {
             type Output = Self;
             #[inline(always)]
-            fn bitor(self, rhs: #storage_ident) -> Self { Self(self.0 | rhs) }
+            fn bitor(self, rhs: Rhs) -> Self {
+                Self(self.0 | ::chapa::BitOperand::into_storage(rhs))
+            }
         }
-        impl ::core::ops::BitXor<#storage_ident> for #name {
+        impl<Rhs> ::core::ops::BitXor<Rhs> for #name
+        where
+            Rhs: ::chapa::BitOperand<#storage_ident>,
+        {
             type Output = Self;
             #[inline(always)]
-            fn bitxor(self, rhs: #storage_ident) -> Self { Self(self.0 ^ rhs) }
+            fn bitxor(self, rhs: Rhs) -> Self {
+                Self(self.0 ^ ::chapa::BitOperand::into_storage(rhs))
+            }
         }
         impl ::core::ops::Not for #name {
             type Output = Self;
             #[inline(always)]
             fn not(self) -> Self { Self(!self.0) }
         }
-        impl ::core::ops::BitAndAssign<#storage_ident> for #name {
+        impl<Rhs> ::core::ops::BitAndAssign<Rhs> for #name
+        where
+            Rhs: ::chapa::BitOperand<#storage_ident>,
+        {
             #[inline(always)]
-            fn bitand_assign(&mut self, rhs: #storage_ident) { self.0 &= rhs; }
+            fn bitand_assign(&mut self, rhs: Rhs) {
+                self.0 &= ::chapa::BitOperand::into_storage(rhs);
+            }
         }
-        impl ::core::ops::BitOrAssign<#storage_ident> for #name {
+        impl<Rhs> ::core::ops::BitOrAssign<Rhs> for #name
+        where
+            Rhs: ::chapa::BitOperand<#storage_ident>,
+        {
             #[inline(always)]
-            fn bitor_assign(&mut self, rhs: #storage_ident) { self.0 |= rhs; }
+            fn bitor_assign(&mut self, rhs: Rhs) {
+                self.0 |= ::chapa::BitOperand::into_storage(rhs);
+            }
         }
-        impl ::core::ops::BitXorAssign<#storage_ident> for #name {
+        impl<Rhs> ::core::ops::BitXorAssign<Rhs> for #name
+        where
+            Rhs: ::chapa::BitOperand<#storage_ident>,
+        {
             #[inline(always)]
-            fn bitxor_assign(&mut self, rhs: #storage_ident) { self.0 ^= rhs; }
+            fn bitxor_assign(&mut self, rhs: Rhs) {
+                self.0 ^= ::chapa::BitOperand::into_storage(rhs);
+            }
         }
     };
 

@@ -237,7 +237,9 @@ assert_eq!(Config::from_raw(0).mode(), 0);
 ## Bitwise operations
 
 Every bitfield struct implements `BitAnd`, `BitOr`, `BitXor`, `Not`,
-`BitAndAssign`, `BitOrAssign`, and `BitXorAssign` against its backing storage type.
+`BitAndAssign`, `BitOrAssign`, and `BitXorAssign`. The right-hand operand may be
+the raw storage type or any bitfield backed by the same storage type; the result
+keeps the left-hand bitfield type.
 
 ```rust
 use chapa::bitfield;
@@ -390,7 +392,7 @@ Enable the `reflection` feature to get compile-time field metadata for every
 
 ```toml
 [dependencies]
-chapa = { version = "0.8", features = ["reflection"] }
+chapa = { version = "0.9", features = ["reflection"] }
 ```
 
 Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
@@ -443,35 +445,38 @@ For a field `foo: u8` spanning bits `4..=7` the macro generates:
 
 Every struct also provides these methods (`N` is the storage size in bytes):
 
-| Item       | Signature                                            |
-| ---------- | ---------------------------------------------------- |
-| Zeroed     | `pub const fn zeroed() -> Self`                      |
-| Raw access | `pub const fn from_raw(val: StorageType) -> Self`    |
-| Raw access | `pub const fn raw(&self) -> StorageType`             |
-| Bytes      | `pub const fn to_le_bytes(self) -> [u8; N]`          |
-| Bytes      | `pub const fn to_be_bytes(self) -> [u8; N]`          |
-| Bytes      | `pub const fn to_ne_bytes(self) -> [u8; N]`          |
-| Bytes      | `pub const fn from_le_bytes(bytes: [u8; N]) -> Self` |
-| Bytes      | `pub const fn from_be_bytes(bytes: [u8; N]) -> Self` |
-| Bytes      | `pub const fn from_ne_bytes(bytes: [u8; N]) -> Self` |
+| Item       | Signature                                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Zeroed     | `pub const fn zeroed() -> Self`                                                                                                 |
+| Raw access | `pub const fn from_raw(val: StorageType) -> Self`                                                                               |
+| Raw access | `pub const fn raw(&self) -> StorageType`                                                                                        |
+| Bytes      | `pub const fn to_le_bytes(self) -> [u8; N]`                                                                                     |
+| Bytes      | `pub const fn to_be_bytes(self) -> [u8; N]`                                                                                     |
+| Bytes      | `pub const fn to_ne_bytes(self) -> [u8; N]`                                                                                     |
+| Bytes      | `pub const fn from_le_bytes(bytes: [u8; N]) -> Self`                                                                            |
+| Bytes      | `pub const fn from_be_bytes(bytes: [u8; N]) -> Self`                                                                            |
+| Bytes      | `pub const fn from_ne_bytes(bytes: [u8; N]) -> Self`                                                                            |
 | Arithmetic | `pub const fn wrapping_add(self, rhs: StorageType) -> Self` (same shape for `wrapping_sub`, `saturating_add`, `saturating_sub`) |
-| Arithmetic | `pub const fn checked_add(self, rhs: StorageType) -> Option<Self>` (same shape for `checked_sub`) |
-| Arithmetic | `pub const fn overflowing_add(self, rhs: StorageType) -> (Self, bool)` (same shape for `overflowing_sub`) |
+| Arithmetic | `pub const fn checked_add(self, rhs: StorageType) -> Option<Self>` (same shape for `checked_sub`)                               |
+| Arithmetic | `pub const fn overflowing_add(self, rhs: StorageType) -> (Self, bool)` (same shape for `overflowing_sub`)                       |
 
 The byte conversions and arithmetic methods operate on the full storage value,
 matching `raw()` and `from_raw()`.
 
 Additionally, every struct implements the following traits:
 
-| Trait          | Signature                                       |
-| -------------- | ----------------------------------------------- |
-| `BitAnd`       | `fn bitand(self, rhs: StorageType) -> Self`     |
-| `BitOr`        | `fn bitor(self, rhs: StorageType) -> Self`      |
-| `BitXor`       | `fn bitxor(self, rhs: StorageType) -> Self`     |
-| `Not`          | `fn not(self) -> Self`                          |
-| `BitAndAssign` | `fn bitand_assign(&mut self, rhs: StorageType)` |
-| `BitOrAssign`  | `fn bitor_assign(&mut self, rhs: StorageType)`  |
-| `BitXorAssign` | `fn bitxor_assign(&mut self, rhs: StorageType)` |
+| Trait          | Signature                                    |
+| -------------- | -------------------------------------------- |
+| `BitAnd`       | `fn bitand<Rhs>(self, rhs: Rhs) -> Self`     |
+| `BitOr`        | `fn bitor<Rhs>(self, rhs: Rhs) -> Self`      |
+| `BitXor`       | `fn bitxor<Rhs>(self, rhs: Rhs) -> Self`     |
+| `Not`          | `fn not(self) -> Self`                       |
+| `BitAndAssign` | `fn bitand_assign<Rhs>(&mut self, rhs: Rhs)` |
+| `BitOrAssign`  | `fn bitor_assign<Rhs>(&mut self, rhs: Rhs)`  |
+| `BitXorAssign` | `fn bitxor_assign<Rhs>(&mut self, rhs: Rhs)` |
+
+`Rhs` may be the backing storage type or a bitfield with the same backing
+storage type.
 
 ## Contributors
 
