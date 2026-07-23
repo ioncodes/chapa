@@ -1,4 +1,4 @@
-use chapa::{bitfield, BitEnum};
+use chapa::{bitenum, bitfield};
 
 /// A simple LSB-0 register with a bool and integer field.
 #[bitfield(u8, order = lsb0)]
@@ -19,7 +19,8 @@ fn debug_lsb0_struct() {
     assert_eq!(s, "StatusReg { enabled: true, mode: 5, reserved: 0 }");
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum Mode {
     Off = 0,
     On = 1,

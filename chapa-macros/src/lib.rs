@@ -1,8 +1,8 @@
 //! Procedural macro implementation for the `chapa` bitfield crate.
 //!
 //! This crate is not meant to be used directly. Use the `chapa` crate instead,
-//! which re-exports the [`bitfield`] attribute macro and [`BitEnum`] derive
-//! macro from here.
+//! which re-exports the [`bitfield`] and [`bitenum`] attribute macros from
+//! here.
 
 mod bit_enum;
 mod codegen;
@@ -12,6 +12,7 @@ mod parse;
 mod validate;
 
 use proc_macro::TokenStream;
+use syn::spanned::Spanned;
 
 use model::BitfieldArgs;
 
@@ -40,21 +41,27 @@ fn bitfield_impl(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStrea
     Ok(output.into())
 }
 
-/// Derive macro that implements `chapa::BitField` for C-like enums.
+/// The `#[bitenum]` attribute macro.
 ///
-/// The enum must also derive `Copy` + `Clone` itself, and mark exactly one
-/// variant `#[fallback]`. That variant is returned by `from_raw` for any raw
-/// value matching no discriminant. Use `try_from_raw`/`TryFrom` to detect such
-/// values instead of coercing them.
-#[proc_macro_derive(BitEnum, attributes(fallback))]
-pub fn bit_enum(input: TokenStream) -> TokenStream {
-    match bit_enum_impl(input) {
+/// Implements `chapa::BitField` for a C-like enum. The enum must mark exactly
+/// one variant `#[fallback]`. That variant is returned by `from_raw` for any
+/// raw value matching no discriminant. Use `try_from_raw`/`TryFrom` to detect
+/// such values instead of coercing them.
+#[proc_macro_attribute]
+pub fn bitenum(attr: TokenStream, item: TokenStream) -> TokenStream {
+    match bitenum_impl(attr, item) {
         Ok(ts) => ts,
         Err(e) => e.to_compile_error().into(),
     }
 }
 
-fn bit_enum_impl(input: TokenStream) -> syn::Result<TokenStream> {
-    let input = syn::parse::<syn::DeriveInput>(input)?;
-    bit_enum::generate(input).map(Into::into)
+fn bitenum_impl(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
+    if !attr.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::TokenStream::from(attr).span(),
+            "bitenum takes no arguments",
+        ));
+    }
+    let item_enum = syn::parse::<syn::ItemEnum>(item)?;
+    bit_enum::generate(item_enum).map(Into::into)
 }

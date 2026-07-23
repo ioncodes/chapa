@@ -97,3 +97,30 @@ fn struct_form_widens_narrow_src() {
     let updated = insert_bits!(reg; 0u8; 24..=31);
     assert_eq!(updated.raw(), 0xFFFF_FF00);
 }
+
+#[test]
+fn runtime_bits_and_ranges() {
+    let offset = 8u8;
+    let bit = 31u8;
+    assert_eq!(
+        insert_bits!(lsb0 u32; 0u32; u32::MAX; offset..offset + 8, bit),
+        0x8000_FF00,
+    );
+
+    let reg = Reg::from_raw(0);
+    let updated = insert_bits!(reg; 0x00FF_0000u32; offset..offset + 8);
+    assert_eq!(updated.raw(), 0x00FF_0000);
+}
+
+#[test]
+fn empty_half_open_range_changes_nothing() {
+    let offset = 0u8;
+    assert_eq!(
+        insert_bits!(lsb0 u32; 0x1234_5678u32; u32::MAX; 0..0),
+        0x1234_5678,
+    );
+
+    let reg = Reg::from_raw(0x1234_5678);
+    let updated = insert_bits!(reg; u32::MAX; offset..offset);
+    assert_eq!(updated.raw(), reg.raw());
+}

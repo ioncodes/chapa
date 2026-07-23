@@ -1,6 +1,7 @@
-use chapa::{bitfield, BitEnum, BitField};
+use chapa::{bitenum, bitfield, BitField};
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum VideoFormat {
     Ntsc = 0,
     Pal = 1,
@@ -58,7 +59,8 @@ fn storage_is_u8() {
     let _: u8 = VideoFormat::Ntsc.raw();
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum AutoDiscrim {
     A,
     B,
@@ -81,7 +83,8 @@ fn auto_discrim_from_raw() {
     assert_eq!(AutoDiscrim::from_raw(99), AutoDiscrim::C); // fallback
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum Sparse {
     Low = 0,
     Mid = 5,
@@ -117,6 +120,50 @@ fn enum_in_bitfield_roundtrip() {
         .with_fmt(VideoFormat::Mpal);
     assert_eq!(dc.rst(), true);
     assert_eq!(dc.fmt(), VideoFormat::Mpal);
+}
+
+/// Copy and Clone are implemented automatically; a bare `#[bitenum]` with no
+/// derive at all works.
+#[bitenum]
+pub enum BareEnum {
+    Zero = 0,
+    #[fallback]
+    One = 1,
+}
+
+/// Explicit Copy and Clone derives also work, including a derive listing only
+/// traits the macro implements itself (the forwarded derive is empty then).
+#[bitenum]
+#[derive(Copy, Clone)]
+pub enum ExplicitCopyClone {
+    #[fallback]
+    Only = 0,
+}
+
+/// Fully qualified Copy and Clone derives are filtered just like their
+/// unqualified forms, avoiding duplicate implementations.
+#[bitenum]
+#[derive(::core::marker::Copy, ::core::clone::Clone)]
+pub enum QualifiedCopyClone {
+    #[fallback]
+    Only = 0,
+}
+
+fn assert_copy<T: Copy>() {}
+fn assert_clone<T: Clone>() {}
+
+#[test]
+fn bare_enum_is_copy_clone() {
+    assert_copy::<BareEnum>();
+    assert_clone::<BareEnum>();
+    assert_copy::<ExplicitCopyClone>();
+    assert_clone::<ExplicitCopyClone>();
+    assert_copy::<QualifiedCopyClone>();
+    assert_clone::<QualifiedCopyClone>();
+
+    let a = BareEnum::One;
+    let b = a; // Copy: `a` stays usable.
+    assert_eq!(a.raw(), b.raw());
 }
 
 #[test]

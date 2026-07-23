@@ -5,15 +5,17 @@
 
 Bitfield structs, batteries included!
 
-`chapa` exposes a single attribute macro, `#[bitfield]`, that turns an ordinary
+`chapa` exposes an attribute macro, `#[bitfield]`, that turns an ordinary
 struct into a newtype backed by a single primitive. Every field maps to an exact
-range of bits and gets a generated getter, setter, and `with_*` builder.
+range of bits and gets a generated getter, setter, and `with_*` builder. A
+companion attribute macro, `#[bitenum]`, makes a C-like enum usable as a field
+type.
 
 ## Features
 
 - **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
 - **Signed fields**: `i8`...`i128` field types with automatic sign extension
-- **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
+- **Enum fields**: Use enums as bitfield fields with `#[bitenum]`
 - **Nested bitfields**: Embed one bitfield struct inside another
 - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
 - **Default values**: Set a field's initial value with `default = ...`
@@ -76,7 +78,7 @@ assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 
 A field's type may be `bool` (single bit), an unsigned integer (`u8`...`u128`),
 a signed integer (`i8`...`i128`, two's-complement: sign-extended on read,
-truncated to the field width on write), a `#[derive(BitEnum)]` enum, or another
+truncated to the field width on write), a `#[bitenum]` enum, or another
 bitfield struct.
 
 ## MSB-0 example
@@ -101,14 +103,15 @@ assert_eq!(cw.raw(), 0xA300_0000);
 
 ## Enum fields
 
-Use `#[derive(BitEnum)]` on an enum to implement `BitField`, allowing it to be
-used as a bitfield field type. The enum must also derive `Copy` + `Clone`
-itself and mark exactly one variant `#[fallback]`.
+Use `#[bitenum]` on an enum to implement `BitField`, allowing it to be
+used as a bitfield field type. The enum must mark exactly one variant
+`#[fallback]`.
 
 ```rust
-use chapa::{bitfield, BitEnum, BitField};
+use chapa::{bitfield, bitenum, BitField};
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum VideoFormat {
     Ntsc = 0,
     Pal = 1,
@@ -206,7 +209,7 @@ This automatically implements `Default`. The `zeroed()` and `from_raw()`
 methods do not apply field defaults. If no fields have defaults, you can still
 use `#[derive(Default)]` to make `default()` return `zeroed()`.
 
-`default` works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum,
+`default` works on any field type (`bool`, integer, `#[bitenum]` enum,
 or nested bitfield, e.g. `default = Mode::On`), including `readonly` ones.
 Values wider than the field truncate to its width, exactly like a setter.
 
@@ -297,7 +300,8 @@ correctly within `low` alone.
 ## Bit extraction
 
 `extract_bits!` keeps only the specified bit positions from a value, zeroing all others.
-Bits can be single indices or inclusive `start..=end` ranges.
+Bits can be single indices, inclusive `start..=end` ranges, or half-open
+`start..end` ranges. Indices and ranges may be runtime expressions.
 
 For raw integers, specify the ordering and type explicitly:
 
@@ -312,6 +316,11 @@ assert_eq!(masked, 0x87C0_FFFF);
 // LSB0: keep bits 0–3 and 12–15
 let masked = extract_bits!(lsb0 u16; val as u16; 0..=3, 12..=15);
 assert_eq!(masked, 0xF00F);
+
+// Runtime ranges work too.
+let offset = 8u8;
+let masked = extract_bits!(lsb0 u32; val; offset..offset + 8);
+assert_eq!(masked, 0x0000_FF00);
 ```
 
 For chapa bitfield structs, omit the ordering. It is deduced from the struct's
@@ -333,7 +342,10 @@ let masked: Packet = extract_bits!(packet; 0, 5..=9, 16..=31);
 assert_eq!(masked.raw(), 0x87C0_FFFF);
 ```
 
-The explicit form (`msb0 u32`) emits `const MASK: T = ...`, so the mask is guaranteed to be computed at compile time. The struct form calls an `#[inline]` helper; LLVM should constant-fold the mask in practice, but there is no language-level guarantee.
+The explicit form (`msb0 u32`) remains usable in const contexts when its value
+and bit specs are literals. Runtime specs are evaluated when the macro is
+called. The struct form calls an `#[inline]` helper and has no language-level
+`const` guarantee.
 
 ## Bit insertion
 
@@ -344,7 +356,7 @@ These macros update bit ranges without using field setters:
 
 Both macros support explicit `msb0` and `lsb0` forms. With a bitfield value, the
 ordering is inferred. They return the updated value instead of changing it in
-place.
+place. Bit indices and ranges may be runtime expressions.
 
 ```rust
 use chapa::{bitfield, place_bits, insert_bits};
@@ -374,11 +386,11 @@ storage width.
 ## Reflection
 
 Enable the `reflection` feature to get compile-time field metadata for every
-`#[bitfield]` struct and `#[derive(BitEnum)]` enum:
+`#[bitfield]` struct and `#[bitenum]` enum:
 
 ```toml
 [dependencies]
-chapa = { version = "0.7", features = ["reflection"] }
+chapa = { version = "0.8", features = ["reflection"] }
 ```
 
 Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
@@ -389,9 +401,9 @@ storage-value "coordinates"), so a field's value is always
 Nested enum and struct fields carry their own variant table / fields.
 
 ```rust
-use chapa::{bitfield, BitEnum, FieldKind};
+use chapa::{bitfield, bitenum, FieldKind};
 
-#[derive(Copy, Clone, BitEnum)]
+#[bitenum]
 pub enum Mode { Off = 0, On = 1, #[fallback] Reserved = 3 }
 
 #[bitfield(u16, order = lsb0)]

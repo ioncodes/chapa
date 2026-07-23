@@ -2,15 +2,17 @@
 //!
 //! Bitfield structs, batteries included!
 //!
-//! `chapa` exposes a single attribute macro, [`bitfield`], that turns an ordinary
+//! `chapa` exposes an attribute macro, [`bitfield`], that turns an ordinary
 //! struct into a newtype backed by a single primitive. Every field maps to an exact
-//! range of bits and gets a generated getter, setter, and `with_*` builder.
+//! range of bits and gets a generated getter, setter, and `with_*` builder. A
+//! companion attribute macro, [`bitenum`], makes a C-like enum usable as a field
+//! type.
 //!
 //! ## Features
 //!
 //! - **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
 //! - **Signed fields**: `i8`...`i128` field types with automatic sign extension
-//! - **Enum fields**: Use enums as bitfield fields with `#[derive(BitEnum)]`
+//! - **Enum fields**: Use enums as bitfield fields with `#[bitenum]`
 //! - **Nested bitfields**: Embed one bitfield struct inside another
 //! - **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
 //! - **Default values**: Set a field's initial value with `default = ...`
@@ -73,7 +75,7 @@
 //!
 //! A field's type may be `bool` (single bit), an unsigned integer (`u8`...`u128`),
 //! a signed integer (`i8`...`i128`, two's-complement: sign-extended on read,
-//! truncated to the field width on write), a `#[derive(BitEnum)]` enum, or another
+//! truncated to the field width on write), a `#[bitenum]` enum, or another
 //! bitfield struct.
 //!
 //! ## MSB-0 example
@@ -98,18 +100,19 @@
 //!
 //! ## Enum fields
 //!
-//! Use `#[derive(BitEnum)]` on an enum to automatically implement [`BitField`],
-//! allowing it to be used as a bitfield field type. The enum must also derive
-//! `Copy` + `Clone`, and mark exactly one variant `#[fallback]`.
+//! Use `#[bitenum]` on an enum to automatically implement [`BitField`],
+//! allowing it to be used as a bitfield field type. The enum must mark exactly
+//! one variant `#[fallback]`.
 //!
 //! `from_raw` coerces any unrecognized raw value to the `#[fallback]` variant;
 //! [`BitField::try_from_raw`] (or `TryFrom`) reports it as
 //! [`InvalidBitPattern`] instead.
 //!
 //! ```rust
-//! use chapa::{bitfield, BitEnum};
+//! use chapa::{bitfield, bitenum};
 //!
-//! #[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+//! #[bitenum]
+//! #[derive(Debug, PartialEq)]
 //! pub enum VideoFormat {
 //!     Ntsc = 0,
 //!     Pal = 1,
@@ -200,7 +203,7 @@
 //! `from_raw()` methods do not apply field defaults. If no fields have defaults,
 //! you can still use `#[derive(Default)]` to make `default()` return `zeroed()`.
 //!
-//! Works on any field type (`bool`, integer, `#[derive(BitEnum)]` enum, or
+//! Works on any field type (`bool`, integer, `#[bitenum]` enum, or
 //! nested bitfield, e.g. `default = Mode::On`), including `readonly` ones;
 //! values wider than the field truncate to its width, like a setter.
 //!
@@ -356,7 +359,7 @@
 //! ## Reflection
 //!
 //! Enable the `reflection` feature to get compile-time field metadata for every
-//! `#[bitfield]` struct and `#[derive(BitEnum)]` enum. Each struct gains an
+//! `#[bitfield]` struct and `#[bitenum]` enum. Each struct gains an
 //! inherent `FIELDS: &'static [FieldInfo]` const; the types ([`FieldInfo`],
 //! [`FieldKind`], [`EnumInfo`]) and the [`Reflect`] trait are re-exported at the
 //! crate root when the feature is on. Offsets and widths are **physical** (in
@@ -364,9 +367,10 @@
 //! `(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
 //!
 //! ```rust
-//! use chapa::{bitfield, BitEnum, FieldKind};
+//! # #[cfg(feature = "reflection")] {
+//! use chapa::{bitfield, bitenum, FieldKind};
 //!
-//! #[derive(Copy, Clone, BitEnum)]
+//! #[bitenum]
 //! pub enum Mode { Off = 0, On = 1, #[fallback] Reserved = 3 }
 //!
 //! #[bitfield(u16, order = lsb0)]
@@ -384,6 +388,7 @@
 //! } else {
 //!     panic!("mode should be reflected as an enum");
 //! }
+//! # }
 //! ```
 //!
 //! ## Generated API
@@ -434,18 +439,18 @@
 
 pub mod mask;
 
+pub use chapa_macros::bitenum;
 pub use chapa_macros::bitfield;
-pub use chapa_macros::BitEnum;
 pub use mask::{lsb0_mask, msb0_mask};
 
 #[cfg(feature = "reflection")]
 pub use reflection::{EnumInfo, FieldInfo, FieldKind, Reflect};
 
 /// Compile-time field metadata emitted by the `#[bitfield]` and
-/// `#[derive(BitEnum)]` macros when the `reflection` feature is enabled.
+/// `#[bitenum]` macros when the `reflection` feature is enabled.
 ///
 /// Every bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
-/// and a [`Reflect`] impl; every `#[derive(BitEnum)]` enum gains a [`Reflect`]
+/// and a [`Reflect`] impl; every `#[bitenum]` enum gains a [`Reflect`]
 /// impl carrying its variant table. This lets tools (debuggers, inspectors)
 /// enumerate a value's fields, their bit positions, and their meaning without
 /// any hand-written tables.
@@ -482,13 +487,13 @@ pub mod reflection {
         /// A primitive signed integer; the field's most significant bit is
         /// sign-extended when read.
         Sint,
-        /// A `#[derive(BitEnum)]` enum; carries its variant table.
+        /// A `#[bitenum]` enum; carries its variant table.
         Enum(&'static EnumInfo),
         /// A nested bitfield struct; carries its own fields for recursion.
         Struct(&'static [FieldInfo]),
     }
 
-    /// Variant table for a `#[derive(BitEnum)]` enum.
+    /// Variant table for a `#[bitenum]` enum.
     #[derive(Debug, Clone, Copy)]
     pub struct EnumInfo {
         /// The enum's type name.
@@ -497,7 +502,7 @@ pub mod reflection {
         pub variants: &'static [(u128, &'static str)],
     }
 
-    /// Implemented by every bitfield struct and `#[derive(BitEnum)]` enum under
+    /// Implemented by every bitfield struct and `#[bitenum]` enum under
     /// the `reflection` feature, describing how the type appears when embedded as
     /// a field. Used to resolve nested field kinds (enum vs. struct) at the field
     /// site, where the two are otherwise indistinguishable.
@@ -520,7 +525,7 @@ pub trait BitStorage: Copy + Sized {
 }
 
 /// Trait implemented by every struct produced by the [`bitfield`] macro and
-/// every enum annotated with `#[derive(BitEnum)]`.
+/// every enum annotated with `#[bitenum]`.
 ///
 /// Allows bitfield structs and enums to be used as nested field types inside
 /// other bitfield structs.
@@ -531,14 +536,14 @@ pub trait BitField: Copy + Sized {
     /// `true` if this bitfield uses MSB0 ordering (bit 0 = most-significant bit).
     ///
     /// Set automatically by the `#[bitfield]` macro. Always `false` for
-    /// `#[derive(BitEnum)]` enums (they have no ordering; they are only
+    /// `#[bitenum]` enums (they have no ordering; they are only
     /// used as field types and are never passed to [`extract_bits!`]).
     const IS_MSB0: bool;
 
     /// Wraps a raw storage value in the bitfield newtype.
     ///
     /// This conversion is total: it never fails. Bitfield structs keep the raw
-    /// value verbatim; `#[derive(BitEnum)]` enums coerce any unrecognized value
+    /// value verbatim; `#[bitenum]` enums coerce any unrecognized value
     /// to their `#[fallback]` variant. Use [`try_from_raw`](Self::try_from_raw)
     /// when you need to reject values that match no variant.
     fn from_raw(raw: Self::Storage) -> Self;
@@ -547,7 +552,7 @@ pub trait BitField: Copy + Sized {
     ///
     /// Returns [`InvalidBitPattern`] for storage values that match no variant.
     /// Bitfield structs are total, so the default implementation always
-    /// succeeds; `#[derive(BitEnum)]` overrides it to validate the discriminant.
+    /// succeeds; `#[bitenum]` overrides it to validate the discriminant.
     #[inline]
     fn try_from_raw(raw: Self::Storage) -> Result<Self, InvalidBitPattern<Self::Storage>> {
         Ok(Self::from_raw(raw))
@@ -558,7 +563,7 @@ pub trait BitField: Copy + Sized {
 }
 
 /// Error returned by [`BitField::try_from_raw`] and the `TryFrom` impl generated
-/// for `#[derive(BitEnum)]` enums when a raw storage value matches no variant.
+/// for `#[bitenum]` enums when a raw storage value matches no variant.
 ///
 /// Carries the offending value so callers can report or log it. It is a small
 /// `Copy` value type: converting a bad pattern allocates nothing and never

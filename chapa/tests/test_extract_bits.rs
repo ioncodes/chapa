@@ -1,4 +1,10 @@
-use chapa::extract_bits;
+use chapa::{bitfield, extract_bits};
+
+#[bitfield(u32, order = lsb0)]
+struct RuntimeReg {
+    #[bits(0..=31)]
+    value: u32,
+}
 
 // --- MSB0 tests (bit 0 = MSB of u32) ---
 
@@ -71,4 +77,56 @@ fn lsb0_mixed() {
 fn lsb0_single_bit() {
     let masked = extract_bits!(lsb0 u8; 0xFFu8; 3);
     assert_eq!(masked, 1 << 3);
+}
+
+// --- Half-open ranges (`N..M` == `N..=(M-1)`, same as `#[bits(...)]`) ---
+
+#[test]
+fn half_open_matches_inclusive() {
+    assert_eq!(
+        extract_bits!(lsb0 u16; 0xFFFFu16; 0..4, 12..16),
+        extract_bits!(lsb0 u16; 0xFFFFu16; 0..=3, 12..=15),
+    );
+    assert_eq!(
+        extract_bits!(msb0 u32; 0xFFFF_FFFFu32; 5..10),
+        extract_bits!(msb0 u32; 0xFFFF_FFFFu32; 5..=9),
+    );
+}
+
+#[test]
+fn runtime_bits_and_ranges() {
+    let offset = 8u8;
+    let high = 24u8;
+    let bit = 3u8;
+
+    assert_eq!(
+        extract_bits!(lsb0 u32; 0xFFFF_FFFFu32; offset..offset + 8),
+        0x0000_FF00,
+    );
+    assert_eq!(
+        extract_bits!(lsb0 u32; 0xFFFF_FFFFu32; bit, high..high + 8),
+        0xFF00_0008,
+    );
+
+    let reg = RuntimeReg::from_raw(0x1234_5678);
+    let masked = extract_bits!(reg; offset..offset + 8);
+    assert_eq!(masked.raw(), 0x0000_5600);
+}
+
+#[test]
+fn empty_half_open_range_selects_nothing() {
+    let offset = 0u8;
+    assert_eq!(extract_bits!(lsb0 u32; u32::MAX; 0..0), 0);
+    assert_eq!(
+        extract_bits!(RuntimeReg::from_raw(u32::MAX); offset..offset).raw(),
+        0,
+    );
+}
+
+#[test]
+fn literal_forms_remain_const() {
+    const MASKED: u32 = extract_bits!(lsb0 u32; u32::MAX; 8..16);
+    const EMPTY: u32 = extract_bits!(lsb0 u32; u32::MAX; 0..0);
+    assert_eq!(MASKED, 0x0000_FF00);
+    assert_eq!(EMPTY, 0);
 }

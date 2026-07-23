@@ -28,6 +28,15 @@ pub struct ImpliedDefault {
     rest: u16,
 }
 
+/// A derive listing only traits the macro implements itself still expands
+/// (the forwarded derive attribute is empty in this case).
+#[bitfield(u8, order = lsb0)]
+#[derive(Debug)]
+pub struct OnlyOverridden {
+    #[bits(0..=7)]
+    value: u8,
+}
+
 fn assert_copy<T: Copy>() {}
 fn assert_clone<T: Clone>() {}
 
@@ -48,6 +57,14 @@ fn explicit_derives_still_compile() {
     assert_copy::<Explicit>();
     assert_clone::<Explicit>();
     assert_eq!(Explicit::zeroed(), Explicit::from_raw(0));
+}
+
+#[test]
+fn derive_with_only_overridden_traits_compiles() {
+    assert_copy::<OnlyOverridden>();
+    assert_clone::<OnlyOverridden>();
+    let v = OnlyOverridden::zeroed().with_value(0xAB);
+    assert_eq!(format!("{:?}", v), "OnlyOverridden { value: 171 }");
 }
 
 #[test]

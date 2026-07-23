@@ -69,7 +69,11 @@ fn msb0_truncates_wide_value() {
 #[test]
 fn explicit_form_is_const() {
     const REG: u32 = place_bits!(lsb0 u32; 0u32; 8..=15; 0xABu32);
+    const HALF_OPEN: u32 = place_bits!(lsb0 u32; 0u32; 8..16; 0xABu32);
+    const EMPTY: u32 = place_bits!(lsb0 u32; 0x1234_5678u32; 0..0; u32::MAX);
     assert_eq!(REG, 0x0000_AB00);
+    assert_eq!(HALF_OPEN, REG);
+    assert_eq!(EMPTY, 0x1234_5678);
 }
 
 // Bitfield form.
@@ -115,4 +119,50 @@ fn struct_form_msb0() {
     let reg = place_bits!(MsbReg::zeroed(); 0..=7; 0xCDu8);
     assert_eq!(reg.hi(), 0xCD);
     assert_eq!(reg.raw(), 0xCD00);
+}
+
+// --- Half-open ranges (`N..M` == `N..=(M-1)`, same as `#[bits(...)]`) ---
+
+#[test]
+fn half_open_matches_inclusive() {
+    assert_eq!(
+        place_bits!(lsb0 u32; 0u32; 8..16; 0xABu8),
+        place_bits!(lsb0 u32; 0u32; 8..=15; 0xABu8),
+    );
+    assert_eq!(
+        place_bits!(msb0 u32; 0u32; 8..16; 0xABu8),
+        place_bits!(msb0 u32; 0u32; 8..=15; 0xABu8),
+    );
+    let a = place_bits!(MsbReg::zeroed(); 0..8; 0xCDu8);
+    let b = place_bits!(MsbReg::zeroed(); 0..=7; 0xCDu8);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn runtime_bits_and_ranges() {
+    let offset = 8u8;
+    assert_eq!(
+        place_bits!(lsb0 u32; 0u32; offset..offset + 8; 0xABu8),
+        0x0000_AB00,
+    );
+    assert_eq!(
+        place_bits!(msb0 u32; 0u32; offset..offset + 8; 0xABu8),
+        0x00AB_0000,
+    );
+
+    let reg = place_bits!(LsbReg::zeroed(); offset..offset + 8; 0xABu8);
+    assert_eq!(reg.raw(), 0x0000_AB00);
+}
+
+#[test]
+fn empty_half_open_range_changes_nothing() {
+    let offset = 0u8;
+    assert_eq!(
+        place_bits!(lsb0 u32; 0x1234_5678u32; 0..0; u32::MAX),
+        0x1234_5678,
+    );
+
+    let reg = LsbReg::from_raw(0x1234_5678);
+    let updated = place_bits!(reg; offset..offset; u32::MAX);
+    assert_eq!(updated.raw(), reg.raw());
 }

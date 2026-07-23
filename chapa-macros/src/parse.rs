@@ -256,7 +256,10 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
     }
 
     // Remove derives that the macro implements itself and forward the rest.
-    // Empty derive attributes and the bitfield attribute are not forwarded.
+    // The derive attribute is forwarded even when no traits remain (an empty
+    // `#[derive()]` is valid) so the original `derive` path span survives into
+    // the output and IDEs keep highlighting the attribute. The bitfield
+    // attribute itself is not forwarded.
     let mut debug_span = None;
     let mut default_span = None;
     let mut copy_span = None;
@@ -282,10 +285,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
                 }
                 Ok(())
             });
-            if !kept.is_empty() {
-                let path = attr.path();
-                user_attrs.push(quote! { #[#path(#(#kept),*)] });
-            }
+            let path = attr.path();
+            user_attrs.push(quote! { #[#path(#(#kept),*)] });
         } else {
             user_attrs.push(quote! { #attr });
         }

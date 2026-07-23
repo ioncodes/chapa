@@ -1,4 +1,4 @@
-use chapa::{bitfield, BitEnum};
+use chapa::{bitenum, bitfield};
 
 /// Primitive and bool fields with `default = ...`.
 #[bitfield(u16, order = lsb0)]
@@ -124,7 +124,8 @@ fn msb0_default_placement() {
     assert_eq!(Msb0Default::default().opcode(), 0xA);
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum Mode {
     Off = 0,
     On = 1,

@@ -167,7 +167,10 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             }
             FieldType::PrimitiveUnsigned(sk) => {
                 let field_ty = format_ident!("{}", sk.unsigned_ident());
-                quote! { ((self.0 >> Self::#shift_name) & ((1 << #field_width) - 1)) as #field_ty }
+                // Mask before shifting: computing the width mask at runtime as
+                // `(1 << width) - 1` overflows when the field spans the full
+                // storage width.
+                quote! { ((self.0 & Self::#mask_name) >> Self::#shift_name) as #field_ty }
             }
             FieldType::PrimitiveSigned(sk) => {
                 let field_ty = format_ident!("{}", sk.signed_ident());
@@ -182,7 +185,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                     StorageKind::smallest_fitting(field_width).unwrap_or(StorageKind::W128);
                 let nested_storage_ident = format_ident!("{}", nested_storage.unsigned_ident());
                 quote! {
-                    let bits = ((self.0 >> Self::#shift_name) & ((1 << #field_width) - 1)) as #nested_storage_ident;
+                    let bits = ((self.0 & Self::#mask_name) >> Self::#shift_name) as #nested_storage_ident;
                     <#ty as ::chapa::BitField>::from_raw(bits)
                 }
             }

@@ -1,8 +1,9 @@
 #![cfg(feature = "reflection")]
 
-use chapa::{bitfield, BitEnum, EnumInfo, FieldInfo, FieldKind};
+use chapa::{bitenum, bitfield, EnumInfo, FieldInfo, FieldKind};
 
-#[derive(Debug, PartialEq, Clone, Copy, BitEnum)]
+#[bitenum]
+#[derive(Debug, PartialEq)]
 pub enum Mode {
     Off = 0,
     On = 1,
