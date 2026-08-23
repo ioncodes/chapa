@@ -52,27 +52,44 @@ fn validate_width(def: &BitfieldDef) -> syn::Result<()> {
     Ok(())
 }
 
-/// Checks that every field range is non-empty and within `effective_width`.
+/// Checks that every field range is non-empty and within `effective_width`,
+/// and that a field does not select the same storage bit more than once.
 fn validate_ranges(def: &BitfieldDef) -> Vec<syn::Error> {
     let mut errs = Vec::new();
     for f in &def.fields {
-        if f.range.start > f.range.end {
-            errs.push(syn::Error::new(
-                f.range.span,
-                format!(
-                    "bit range {}..={} is backwards (start > end)",
-                    f.range.start, f.range.end
-                ),
-            ));
+        for range in &f.ranges {
+            if range.start > range.end {
+                errs.push(syn::Error::new(
+                    range.span,
+                    format!(
+                        "bit range {}..={} is backwards (start > end)",
+                        range.start, range.end
+                    ),
+                ));
+            }
+            if range.end >= def.effective_width {
+                errs.push(syn::Error::new(
+                    range.span,
+                    format!(
+                        "bit {} is out of bounds for effective width {}",
+                        range.end, def.effective_width
+                    ),
+                ));
+            }
         }
-        if f.range.end >= def.effective_width {
-            errs.push(syn::Error::new(
-                f.range.span,
-                format!(
-                    "bit {} is out of bounds for effective width {}",
-                    f.range.end, def.effective_width
-                ),
-            ));
+
+        for (index, range) in f.ranges.iter().enumerate() {
+            for other in f.ranges.iter().skip(index + 1) {
+                if range.overlaps(other) {
+                    errs.push(syn::Error::new(
+                        other.span,
+                        format!(
+                            "field `{}` selects overlapping ranges {}..={} and {}..={}",
+                            f.accessor_name, range.start, range.end, other.start, other.end,
+                        ),
+                    ));
+                }
+            }
         }
     }
     errs
@@ -83,12 +100,13 @@ fn validate_ranges(def: &BitfieldDef) -> Vec<syn::Error> {
 fn validate_field_types(def: &BitfieldDef) -> Vec<syn::Error> {
     let mut errs = Vec::new();
     for f in &def.fields {
-        let width = f.range.width();
+        let width = f.width();
+        let span = f.ranges[0].span;
         match &f.ty {
             FieldType::Bool => {
                 if width != 1 {
                     errs.push(syn::Error::new(
-                        f.range.span,
+                        span,
                         format!(
                             "bool field `{}` must be exactly 1 bit wide, but range spans {} bits",
                             f.accessor_name, width
@@ -99,7 +117,7 @@ fn validate_field_types(def: &BitfieldDef) -> Vec<syn::Error> {
             FieldType::PrimitiveUnsigned(sk) => {
                 if width > sk.bit_width() {
                     errs.push(syn::Error::new(
-                        f.range.span,
+                        span,
                         format!(
                             "field `{}` range spans {} bits but type `{}` can only hold {} bits",
                             f.accessor_name,
@@ -113,7 +131,7 @@ fn validate_field_types(def: &BitfieldDef) -> Vec<syn::Error> {
             FieldType::PrimitiveSigned(sk) => {
                 if width > sk.bit_width() {
                     errs.push(syn::Error::new(
-                        f.range.span,
+                        span,
                         format!(
                             "field `{}` range spans {} bits but type `{}` can only hold {} bits",
                             f.accessor_name,
@@ -147,9 +165,15 @@ fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
             let a = &fields[i];
             let b = &fields[j];
 
-            if !a.range.overlaps(&b.range) {
+            let overlap = a.ranges.iter().find_map(|a_range| {
+                b.ranges
+                    .iter()
+                    .find(|b_range| a_range.overlaps(b_range))
+                    .map(|b_range| (a_range, b_range))
+            });
+            let Some((a_range, b_range)) = overlap else {
                 continue;
-            }
+            };
 
             let a_overlay = a.overlay.as_deref();
             let b_overlay = b.overlay.as_deref();
@@ -158,41 +182,45 @@ fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
                 // Both base fields -> error
                 (None, None) => {
                     errs.push(syn::Error::new(
-                        b.range.span,
+                        b_range.span,
                         format!(
                             "field `{}` (bits {}..={}) overlaps with `{}` (bits {}..={})",
                             b.accessor_name,
-                            b.range.start,
-                            b.range.end,
+                            b_range.start,
+                            b_range.end,
                             a.accessor_name,
-                            a.range.start,
-                            a.range.end,
+                            a_range.start,
+                            a_range.end,
                         ),
                     ));
                 }
                 // One base, one overlay -> error
                 (None, Some(_)) | (Some(_), None) => {
-                    let (base, over) = if a_overlay.is_none() { (a, b) } else { (b, a) };
+                    let (base, base_range, over, over_range) = if a_overlay.is_none() {
+                        (a, a_range, b, b_range)
+                    } else {
+                        (b, b_range, a, a_range)
+                    };
                     errs.push(syn::Error::new(
-                        over.range.span,
+                        over_range.span,
                         format!(
                             "overlay field `{}` (bits {}..={}) overlaps with base field `{}` (bits {}..={})",
-                            over.accessor_name, over.range.start, over.range.end,
-                            base.accessor_name, base.range.start, base.range.end,
+                            over.accessor_name, over_range.start, over_range.end,
+                            base.accessor_name, base_range.start, base_range.end,
                         ),
                     ));
                 }
                 // Same overlay group -> error
                 (Some(oa), Some(ob)) if oa == ob => {
                     errs.push(syn::Error::new(
-                        b.range.span,
+                        b_range.span,
                         format!(
                             "fields `{}` and `{}` in overlay group \"{}\" overlap at bits {}..={}",
                             a.accessor_name,
                             b.accessor_name,
                             oa,
-                            a.range.start.max(b.range.start),
-                            a.range.end.min(b.range.end),
+                            a_range.start.max(b_range.start),
+                            a_range.end.min(b_range.end),
                         ),
                     ));
                 }
@@ -224,4 +252,51 @@ fn validate_aliases(def: &BitfieldDef) -> Vec<syn::Error> {
         }
     }
     errs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse;
+
+    fn definition(source: &str) -> BitfieldDef {
+        let args: BitfieldArgs = syn::parse_str("u16, order = lsb0").expect("valid arguments");
+        let item: syn::ItemStruct = syn::parse_str(source).expect("valid struct syntax");
+        parse::parse_struct(&args, &item).expect("valid bitfield syntax")
+    }
+
+    #[test]
+    fn rejects_overlapping_ranges_within_one_field() {
+        let def = definition("struct Bad { #[bits(0..=3, 3..=5)] value: u8 }");
+
+        let error = validate(&def).expect_err("overlapping segments must be rejected");
+        assert!(error
+            .to_string()
+            .contains("selects overlapping ranges 0..=3 and 3..=5"));
+    }
+
+    #[test]
+    fn detects_overlap_with_any_segment() {
+        let def = definition(
+            "struct Bad {
+                #[bits(0, 8)] split: u8,
+                #[bits(8)] other: bool,
+            }",
+        );
+
+        let error = validate(&def).expect_err("field overlap must be rejected");
+        assert!(error.to_string().contains("other"));
+    }
+
+    #[test]
+    fn different_overlay_groups_may_overlap_split_segments() {
+        let def = definition(
+            "struct Good {
+                #[bits(0, 8, overlay = \"first\")] split: u8,
+                #[bits(8, overlay = \"second\")] other: bool,
+            }",
+        );
+
+        validate(&def).expect("different overlay groups may overlap");
+    }
 }

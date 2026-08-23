@@ -35,6 +35,13 @@ pub struct Reg {
     delta: i8,
 }
 
+#[bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone)]
+pub struct SplitReg {
+    #[bits(12..=15, 0..=3)]
+    split: u8,
+}
+
 fn field<'a>(fields: &'a [FieldInfo], name: &str) -> &'a FieldInfo {
     fields
         .iter()
@@ -94,4 +101,19 @@ fn nested_struct_recurses() {
     assert_eq!(inner.len(), 2);
     assert_eq!(field(inner, "lo").offset, 0);
     assert_eq!(field(inner, "hi").offset, 2);
+}
+
+#[test]
+fn split_field_exposes_each_storage_segment() {
+    let f = field(SplitReg::FIELDS, "split");
+    assert_eq!(f.offset, 0);
+    assert_eq!(f.width, 8);
+    assert_eq!(f.segments, SplitReg::SPLIT_SEGMENTS);
+    assert_eq!(f.segments.len(), 2);
+    assert_eq!(f.segments[0].offset, 12);
+    assert_eq!(f.segments[0].value_offset, 4);
+    assert_eq!(f.segments[0].width, 4);
+    assert_eq!(f.segments[1].offset, 0);
+    assert_eq!(f.segments[1].value_offset, 0);
+    assert_eq!(f.segments[1].width, 4);
 }

@@ -134,7 +134,10 @@ pub struct BitRange {
 impl BitRange {
     /// Returns the number of bits covered by this range.
     pub fn width(&self) -> u32 {
-        self.end - self.start + 1
+        self.end
+            .checked_sub(self.start)
+            .and_then(|width| width.checked_add(1))
+            .unwrap_or(0)
     }
 
     /// Returns `true` if this range shares any bits with `other`.
@@ -169,8 +172,9 @@ pub struct FieldDef {
     pub ty: FieldType,
     /// Original type.
     pub raw_ty: syn::Type,
-    /// Logical bit range declared in `#[bits(...)]`.
-    pub range: BitRange,
+    /// Logical bit ranges declared in `#[bits(...)]`, ordered from the most-
+    /// significant value chunk to the least-significant value chunk.
+    pub ranges: Vec<BitRange>,
     /// Whether setters should be suppressed.
     pub readonly: bool,
     /// Extra accessor names declared with `alias = ...`.
@@ -184,6 +188,15 @@ pub struct FieldDef {
     pub default: Option<syn::Expr>,
     /// Source span of the field identifier (for error reporting).
     pub span: Span,
+}
+
+impl FieldDef {
+    /// Returns the total number of bits occupied by all of the field's ranges.
+    pub fn width(&self) -> u32 {
+        self.ranges
+            .iter()
+            .fold(0, |width, range| width.saturating_add(range.width()))
+    }
 }
 
 /// The fully parsed and resolved definition of a bitfield struct.

@@ -78,11 +78,42 @@ impl Parse for BitfieldArgs {
 
 /// Content parsed from `#[bits(...)]` on a field.
 struct BitsAttr {
-    range: BitRange,
+    ranges: Vec<BitRange>,
     readonly: bool,
     aliases: Vec<String>,
     overlay: Option<String>,
     default: Option<syn::Expr>,
+}
+
+fn parse_bit_range(input: ParseStream) -> syn::Result<BitRange> {
+    let start_lit: LitInt = input.parse()?;
+    let start: u32 = start_lit.base10_parse()?;
+    let span = start_lit.span();
+
+    if !input.peek(Token![..]) {
+        return Ok(BitRange {
+            start,
+            end: start,
+            span,
+        });
+    }
+
+    input.parse::<Token![..]>()?;
+    let inclusive = input.peek(Token![=]);
+    if inclusive {
+        input.parse::<Token![=]>()?;
+    }
+    let end_lit: LitInt = input.parse()?;
+    let end_val: u32 = end_lit.base10_parse()?;
+    let end = if inclusive {
+        end_val
+    } else {
+        end_val.checked_sub(1).ok_or_else(|| {
+            syn::Error::new(end_lit.span(), "half-open bit range ending at 0 is empty")
+        })?
+    };
+
+    Ok(BitRange { start, end, span })
 }
 
 fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
@@ -91,44 +122,25 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
     let mut overlay = None;
     let mut default = None;
 
-    // Parse the range part. Could be:
-    // - single literal: `5`
-    // - range expression: `0..4` or `0..=3`
-    let range = if input.peek(LitInt) {
-        // Could be single bit or start of a range
-        let start_lit: LitInt = input.parse()?;
-        let start: u32 = start_lit.base10_parse()?;
-        let span = start_lit.span();
-
-        if input.peek(Token![..]) {
-            // Range
-            let dots_span = input.parse::<Token![..]>()?.span();
-            let _ = dots_span;
-            let inclusive = input.peek(Token![=]);
-            if inclusive {
-                input.parse::<Token![=]>()?;
-            }
-            let end_lit: LitInt = input.parse()?;
-            let end_val: u32 = end_lit.base10_parse()?;
-            let end = if inclusive { end_val } else { end_val - 1 };
-            BitRange { start, end, span }
-        } else {
-            // Single bit
-            BitRange {
-                start,
-                end: start,
-                span,
-            }
-        }
-    } else {
+    if !input.peek(LitInt) {
         return Err(input.error("expected bit index or range"));
-    };
+    }
 
-    // Parse optional keywords
+    // Ranges are ordered from the field value's most-significant chunk to its
+    // least-significant chunk. A single range retains the original syntax and
+    // semantics.
+    let mut ranges = vec![parse_bit_range(input)?];
+
+    // Parse additional ranges followed by optional keywords.
     while !input.is_empty() {
         input.parse::<Token![,]>()?;
         if input.is_empty() {
             break;
+        }
+
+        if input.peek(LitInt) {
+            ranges.push(parse_bit_range(input)?);
+            continue;
         }
 
         let key: Ident = input.parse()?;
@@ -174,7 +186,7 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
     }
 
     Ok(BitsAttr {
-        range,
+        ranges,
         readonly,
         aliases,
         overlay,
@@ -246,7 +258,7 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
             accessor_name,
             ty: field_type,
             raw_ty: field.ty.clone(),
-            range: parsed.range,
+            ranges: parsed.ranges,
             readonly,
             aliases: parsed.aliases,
             overlay: parsed.overlay,

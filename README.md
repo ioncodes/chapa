@@ -6,14 +6,15 @@
 Bitfield structs, batteries included!
 
 `chapa` exposes an attribute macro, `#[bitfield]`, that turns an ordinary
-struct into a newtype backed by a single primitive. Every field maps to an exact
-range of bits and gets a generated getter, setter, and `with_*` builder. A
+struct into a newtype backed by a single primitive. Every field maps to one or
+more exact ranges of bits and gets a generated getter, setter, and `with_*` builder. A
 companion attribute macro, `#[bitenum]`, makes a C-like enum usable as a field
 type.
 
 ## Features
 
 - **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
+- **Non-contiguous fields**: Gather and scatter one value across ordered bit ranges
 - **Signed fields**: `i8`...`i128` field types with automatic sign extension
 - **Enum fields**: Use enums as bitfield fields with `#[bitenum]`
 - **Nested bitfields**: Embed one bitfield struct inside another
@@ -65,16 +66,17 @@ assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 
 ## `#[bits(...)]` options
 
-| Option              | Description                                       |
-| ------------------- | ------------------------------------------------- |
-| `N`                 | Single bit at index N                             |
-| `N..=M`             | Inclusive range from bit N to bit M               |
-| `N..M`              | Half-open range (equivalent to `N..=(M-1)`)       |
-| `readonly`          | Suppress `set_*` and `with_*` generation          |
-| `default = <expr>`  | Starting value applied by `default()`             |
-| `alias = "name"`    | Generate additional accessor under `name`         |
-| `alias = ["a","b"]` | Multiple aliases                                  |
-| `overlay = "group"` | Allow overlap with fields in other overlay groups |
+| Option              | Description                                        |
+| ------------------- | -------------------------------------------------- |
+| `N`                 | Single bit at index N                              |
+| `N..=M`             | Inclusive range from bit N to bit M                |
+| `N..M`              | Half-open range (equivalent to `N..=(M-1)`)        |
+| `R1, R2, ...`       | Concatenate ranges from most- to least-significant |
+| `readonly`          | Suppress `set_*` and `with_*` generation           |
+| `default = <expr>`  | Starting value applied by `default()`              |
+| `alias = "name"`    | Generate additional accessor under `name`          |
+| `alias = ["a","b"]` | Multiple aliases                                   |
+| `overlay = "group"` | Allow overlap with fields in other overlay groups  |
 
 A field's type may be `bool` (single bit), an unsigned integer (`u8`...`u128`),
 a signed integer (`i8`...`i128`, two's-complement: sign-extended on read,
@@ -99,6 +101,27 @@ let cw = ControlWord::zeroed()
   .with_opcode(0xA)
   .with_dst(0x3);
 assert_eq!(cw.raw(), 0xA300_0000);
+```
+
+## Non-contiguous fields
+
+A field may span several ranges. Ranges are concatenated in declaration order,
+from the field value's most-significant chunk to its least-significant chunk.
+The struct's `msb0`/`lsb0` option controls how each range maps to storage; it
+does not reorder the ranges.
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u32, order = msb0)]
+pub struct MovT3 {
+    #[bits(12..=15, 5, 17..=19, 24..=31)]
+    imm16: u16,
+}
+
+let instruction = MovT3::zeroed().with_imm16(0xABCD);
+assert_eq!(instruction.raw(), 0x040A_30CD);
+assert_eq!(instruction.imm16(), 0xABCD);
 ```
 
 ## Enum fields
@@ -397,10 +420,11 @@ chapa = { version = "0.9", features = ["reflection"] }
 
 Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
 describing its fields: their accessor name, bit position, aliases and how the
-raw bits should be interpreted. Offsets and widths are **physical** (in
-storage-value "coordinates"), so a field's value is always
-`(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
-Nested enum and struct fields carry their own variant table / fields.
+raw bits should be interpreted. `offset` is the lowest physical bit occupied
+and `width` is the assembled value width. Each field also exposes `segments`;
+every segment records its physical `offset`, assembled-value `value_offset`,
+and `width`. Contiguous fields have one segment. Nested enum and struct fields
+carry their own variant table / fields.
 
 ```rust
 use chapa::{bitfield, bitenum, FieldKind};
@@ -428,20 +452,26 @@ if let FieldKind::Enum(info) = mode.kind {
 ```
 
 `FieldKind` distinguishes `Bool`, `Uint`, `Sint`, `Enum(&EnumInfo)` and
-`Struct(&[FieldInfo])`. The types (`FieldInfo`, `FieldKind`, `EnumInfo`) and the
-`Reflect` trait are re-exported at the crate root when the feature is on.
+`Struct(&[FieldInfo])`. `FieldSegment` is always available; `FieldInfo`,
+`FieldKind`, `EnumInfo`, and the `Reflect` trait are re-exported at the crate
+root when reflection is enabled.
 
 ## Generated API
 
 For a field `foo: u8` spanning bits `4..=7` the macro generates:
 
-| Item     | Signature                                      |
-| -------- | ---------------------------------------------- |
-| Constant | `pub const FOO_SHIFT: u32`                     |
-| Constant | `pub const FOO_MASK: StorageType`              |
-| Getter   | `pub const fn foo(&self) -> u8`                |
-| Setter   | `pub const fn set_foo(&mut self, val: u8)`     |
-| Builder  | `pub const fn with_foo(self, val: u8) -> Self` |
+| Item     | Signature                                         |
+| -------- | ------------------------------------------------- |
+| Constant | `pub const FOO_SHIFT: u32`                        |
+| Constant | `pub const FOO_MASK: StorageType`                 |
+| Constant | `pub const FOO_SEGMENTS: &'static [FieldSegment]` |
+| Getter   | `pub const fn foo(&self) -> u8`                   |
+| Setter   | `pub const fn set_foo(&mut self, val: u8)`        |
+| Builder  | `pub const fn with_foo(self, val: u8) -> Self`    |
+
+`FOO_SHIFT` is the lowest physical bit selected by the field and `FOO_MASK` is
+the union of all selected bits. `FOO_SEGMENTS` describes how to assemble or
+scatter non-contiguous fields; it contains one entry for a contiguous field.
 
 Every struct also provides these methods (`N` is the storage size in bytes):
 

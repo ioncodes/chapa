@@ -3,14 +3,15 @@
 //! Bitfield structs, batteries included!
 //!
 //! `chapa` exposes an attribute macro, [`bitfield`], that turns an ordinary
-//! struct into a newtype backed by a single primitive. Every field maps to an exact
-//! range of bits and gets a generated getter, setter, and `with_*` builder. A
+//! struct into a newtype backed by a single primitive. Every field maps to one or
+//! more exact ranges of bits and gets a generated getter, setter, and `with_*` builder. A
 //! companion attribute macro, [`bitenum`], makes a C-like enum usable as a field
 //! type.
 //!
 //! ## Features
 //!
 //! - **MSB0 and LSB0 support**: Naturally write bit orders as per datasheet
+//! - **Non-contiguous fields**: Gather and scatter one value across ordered bit ranges
 //! - **Signed fields**: `i8`...`i128` field types with automatic sign extension
 //! - **Enum fields**: Use enums as bitfield fields with `#[bitenum]`
 //! - **Nested bitfields**: Embed one bitfield struct inside another
@@ -67,6 +68,7 @@
 //! | `N` | Single bit at index N |
 //! | `N..=M` | Inclusive range from bit N to bit M |
 //! | `N..M` | Half-open range (equivalent to `N..=(M-1)`) |
+//! | `R1, R2, ...` | Concatenate ranges from most- to least-significant |
 //! | `readonly` | Suppress `set_*` and `with_*` generation |
 //! | `default = <expr>` | Starting value applied by `default()` |
 //! | `alias = "name"` | Generate additional accessor under `name` |
@@ -96,6 +98,30 @@
 //!     .with_opcode(0xA)
 //!     .with_dst(0x3);
 //! assert_eq!(cw.raw(), 0xA300_0000);
+//! ```
+//!
+//! ## Non-contiguous fields
+//!
+//! A field may span several ranges. Ranges are concatenated in declaration order,
+//! from the field value's most-significant chunk to its least-significant chunk.
+//! The struct's `msb0`/`lsb0` option controls how each range maps to storage; it
+//! does not reorder the ranges.
+//!
+//! This ARM Thumb-style immediate follows `imm16 = imm4:i:imm3:imm8` even though
+//! the isolated `i` bit appears earlier in the instruction word:
+//!
+//! ```rust
+//! use chapa::bitfield;
+//!
+//! #[bitfield(u32, order = msb0)]
+//! pub struct MovT3 {
+//!     #[bits(12..=15, 5, 17..=19, 24..=31)]
+//!     imm16: u16,
+//! }
+//!
+//! let instruction = MovT3::zeroed().with_imm16(0xABCD);
+//! assert_eq!(instruction.raw(), 0x040A_30CD);
+//! assert_eq!(instruction.imm16(), 0xABCD);
 //! ```
 //!
 //! ## Enum fields
@@ -364,9 +390,10 @@
 //! `#[bitfield]` struct and `#[bitenum]` enum. Each struct gains an
 //! inherent `FIELDS: &'static [FieldInfo]` const; the types ([`FieldInfo`],
 //! [`FieldKind`], [`EnumInfo`]) and the [`Reflect`] trait are re-exported at the
-//! crate root when the feature is on. Offsets and widths are **physical** (in
-//! storage-value coordinates), so a field's value is always
-//! `(raw >> offset) & ((1 << width) - 1)` regardless of `msb0`/`lsb0` ordering.
+//! crate root when the feature is on. [`FieldSegment`] is always available.
+//! `offset` is the lowest physical bit occupied and `width` is the assembled
+//! value width. [`FieldInfo::segments`] describes the physical and
+//! assembled-value position of every contiguous portion of a field.
 //!
 //! ```rust
 //! # #[cfg(feature = "reflection")] {
@@ -401,9 +428,14 @@
 //! |---|---|
 //! | Constant | `pub const FOO_SHIFT: u32` |
 //! | Constant | `pub const FOO_MASK: StorageType` |
+//! | Constant | `pub const FOO_SEGMENTS: &'static [FieldSegment]` |
 //! | Getter | `pub const fn foo(&self) -> u8` |
 //! | Setter | `pub const fn set_foo(&mut self, val: u8)` |
 //! | Builder | `pub const fn with_foo(self, val: u8) -> Self` |
+//!
+//! `FOO_SHIFT` is the lowest physical bit selected by the field and `FOO_MASK`
+//! is the union of all selected bits. `FOO_SEGMENTS` describes how to assemble
+//! or scatter non-contiguous fields; it has one entry for a contiguous field.
 //!
 //! Every struct also provides these methods (`N` is the storage size in bytes):
 //!
@@ -448,6 +480,21 @@ pub use chapa_macros::bitenum;
 pub use chapa_macros::bitfield;
 pub use mask::{lsb0_mask, msb0_mask};
 
+/// Describes how one contiguous storage segment contributes to a field value.
+///
+/// Non-contiguous fields have one segment per range in their `#[bits(...)]`
+/// declaration. To gather a segment, extract `width` bits at `offset`, then
+/// shift that chunk left by `value_offset` in the assembled value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldSegment {
+    /// Physical shift of the segment within the storage value.
+    pub offset: u32,
+    /// Shift of the segment within the assembled field value.
+    pub value_offset: u32,
+    /// Number of bits in the segment.
+    pub width: u32,
+}
+
 #[cfg(feature = "reflection")]
 pub use reflection::{EnumInfo, FieldInfo, FieldKind, Reflect};
 
@@ -460,9 +507,9 @@ pub use reflection::{EnumInfo, FieldInfo, FieldKind, Reflect};
 /// enumerate a value's fields, their bit positions, and their meaning without
 /// any hand-written tables.
 ///
-/// Offsets and widths are **physical** (in storage-value coordinates), so a
-/// field's value is always `(raw >> offset) & ((1 << width) - 1)` regardless of
-/// the struct's `msb0`/`lsb0` ordering.
+/// A field's `offset` is its lowest occupied physical bit and its `width` is
+/// the assembled value width. [`FieldInfo::segments`] provides the complete
+/// mapping for contiguous and non-contiguous fields.
 #[cfg(feature = "reflection")]
 pub mod reflection {
     /// Describes one field of a bitfield struct.
@@ -470,10 +517,15 @@ pub mod reflection {
     pub struct FieldInfo {
         /// The field's accessor name (leading `_` stripped).
         pub name: &'static str,
-        /// Physical shift of the field within the storage value.
+        /// Lowest physical bit occupied by the field.
+        ///
+        /// For a contiguous field this remains the shift used to extract it.
+        /// Use [`segments`](Self::segments) for non-contiguous fields.
         pub offset: u32,
-        /// Number of bits the field occupies.
+        /// Total number of bits in the assembled field value.
         pub width: u32,
+        /// Storage segments and their positions in the assembled field value.
+        pub segments: &'static [super::FieldSegment],
         /// Extra accessor names declared with `alias = ...`.
         pub aliases: &'static [&'static str],
         /// Whether the field suppresses setters.

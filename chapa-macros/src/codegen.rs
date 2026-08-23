@@ -14,7 +14,8 @@ use crate::ordering;
 ///
 /// Emits:
 /// - A `#[repr(transparent)]` newtype wrapping the storage type.
-/// - `{FIELD}_SHIFT` and `{FIELD}_MASK` associated constants for every field.
+/// - `{FIELD}_SHIFT`, `{FIELD}_MASK`, and `{FIELD}_SEGMENTS` associated
+///   constants for every field.
 /// - `zeroed()`, `from_raw()`, and `raw()` inherent methods.
 /// - `to_{le,be,ne}_bytes()` / `from_{le,be,ne}_bytes()` inherent methods.
 /// - `{wrapping,saturating,checked,overflowing}_{add,sub}()` inherent methods
@@ -68,17 +69,51 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     let mut field_infos = Vec::new();
 
     for field in &def.fields {
-        let phys = ordering::compute(def.args.order, &field.range, def.effective_width);
+        let field_width = field.width();
+        let mut remaining_width = field_width;
+        let segments: Vec<_> = field
+            .ranges
+            .iter()
+            .map(|range| {
+                remaining_width -= range.width();
+                (
+                    ordering::compute(def.args.order, range, def.effective_width),
+                    remaining_width,
+                )
+            })
+            .collect();
 
         let accessor = &field.accessor_name;
         let shift_name = format_ident!("{}_SHIFT", accessor.to_uppercase(), span = field.span);
         let mask_name = format_ident!("{}_MASK", accessor.to_uppercase(), span = field.span);
+        let segments_name =
+            format_ident!("{}_SEGMENTS", accessor.to_uppercase(), span = field.span);
 
-        let shift_val = phys.shift;
-        let mask_val = phys.mask;
+        let shift_val = segments
+            .iter()
+            .map(|(physical, _)| physical.shift)
+            .min()
+            .expect("validated fields contain at least one range");
+        let mask_val = segments
+            .iter()
+            .fold(0, |mask, (physical, _)| mask | physical.mask);
 
         // Const for mask needs to be storage-typed
         let mask_literal = storage_mask_literal(def.args.storage, mask_val);
+        let segment_infos: Vec<_> = segments
+            .iter()
+            .map(|(physical, value_offset)| {
+                let offset = physical.shift;
+                let width = physical.field_width;
+                quote! {
+                    ::chapa::FieldSegment {
+                        offset: #offset,
+                        value_offset: #value_offset,
+                        width: #width,
+                    }
+                }
+            })
+            .collect();
 
         let is_underscore_prefixed = field.name.to_string().starts_with('_');
         let maybe_allow_dead_code = if is_underscore_prefixed {
@@ -92,6 +127,9 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             #vis const #shift_name: u32 = #shift_val;
             #maybe_allow_dead_code
             #vis const #mask_name: #storage_ident = #mask_literal;
+            #maybe_allow_dead_code
+            #vis const #segments_name: &'static [::chapa::FieldSegment] =
+                &[ #(#segment_infos),* ];
         });
 
         // `const fn` is possible only when packing/unpacking this field is const.
@@ -103,22 +141,37 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             quote! { const }
         };
 
-        // The contribution of `value` to the storage: shifted and masked into this
-        // field's bits, truncating anything too wide. Shared by the setter, the
-        // `with_*` builder, and the `default = ...` initializer so the packing
-        // logic lives in exactly one place.
-        let insert = |value: &TokenStream| match &field.ty {
-            FieldType::Bool => quote! { (if #value { Self::#mask_name } else { 0 }) },
-            FieldType::PrimitiveUnsigned(_) => {
-                quote! { (((#value as #storage_ident) << Self::#shift_name) & Self::#mask_name) }
-            }
-            FieldType::PrimitiveSigned(sk) => {
-                let field_ty = format_ident!("{}", sk.signed_ident());
-                quote! { ((((#value as #field_ty) as #storage_ident) << Self::#shift_name) & Self::#mask_name) }
-            }
-            FieldType::Nested(ty) => quote! {
-                (((<#ty as ::chapa::BitField>::raw(&(#value)) as #storage_ident) << Self::#shift_name) & Self::#mask_name)
-            },
+        // Scatter an assembled field value into its storage segments. The
+        // temporary ensures expressions such as `default = ...` are evaluated
+        // exactly once even when a field has several ranges.
+        let pack = |raw_value: TokenStream| {
+            let contributions = segments.iter().map(|(physical, value_offset)| {
+                let shift = physical.shift;
+                let segment_mask = storage_mask_literal(def.args.storage, physical.mask);
+                quote! {
+                    (((value >> #value_offset) << #shift) & #segment_mask)
+                }
+            });
+            quote! {{
+                let value: #storage_ident = #raw_value;
+                0 #(| #contributions)*
+            }}
+        };
+        let insert = |value: &TokenStream| {
+            let raw_value = match &field.ty {
+                FieldType::Bool => quote! {
+                    if #value { 1 as #storage_ident } else { 0 as #storage_ident }
+                },
+                FieldType::PrimitiveUnsigned(_) => quote! { #value as #storage_ident },
+                FieldType::PrimitiveSigned(sk) => {
+                    let field_ty = format_ident!("{}", sk.signed_ident());
+                    quote! { (#value as #field_ty) as #storage_ident }
+                }
+                FieldType::Nested(ty) => quote! {
+                    <#ty as ::chapa::BitField>::raw(&(#value)) as #storage_ident
+                },
+            };
+            pack(raw_value)
         };
 
         // Fold a `default = ...` value into the bits produced by `Default::default()`.
@@ -127,18 +180,25 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         }
 
         let getter_name = format_ident!("{}", accessor, span = field.span);
-        let getter_doc = format!(
-            "Returns the `{}` field (bits {}..={}).",
-            accessor, field.range.start, field.range.end
-        );
-        let field_width = phys.field_width;
+        let ranges_doc = field
+            .ranges
+            .iter()
+            .map(|range| {
+                if range.start == range.end {
+                    range.start.to_string()
+                } else {
+                    format!("{}..={}", range.start, range.end)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let getter_doc = format!("Returns the `{accessor}` field (bits {ranges_doc}).");
 
         // Reflection metadata for this field, built only when the feature is on
-        // (mirrors the gating in `bit_enum.rs`). `offset`/`width` are physical
-        // (storage-value coordinates), so consumers extract with
-        // `(raw >> offset) & ((1 << width) - 1)` regardless of ordering. Enum vs.
-        // nested-struct is resolved through the field type's own `Reflect` impl,
-        // since both are `FieldType::Nested` at the field site.
+        // (mirrors the gating in `bit_enum.rs`). Segments contain the complete
+        // storage-to-value mapping. Enum vs. nested-struct is resolved through
+        // the field type's own `Reflect` impl, since both are
+        // `FieldType::Nested` at the field site.
         if cfg!(feature = "reflection") {
             let field_kind = match &field.ty {
                 FieldType::Bool => quote! { ::chapa::FieldKind::Bool },
@@ -153,6 +213,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                     name: #accessor,
                     offset: #shift_val,
                     width: #field_width,
+                    segments: #name::#segments_name,
                     aliases: &[ #(#aliases),* ],
                     readonly: #readonly,
                     kind: #field_kind,
@@ -160,24 +221,31 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             });
         }
 
-        // Generate getter
+        // Gather all storage segments into one field value.
+        let gather_contributions = segments.iter().map(|(physical, value_offset)| {
+            let shift = physical.shift;
+            let segment_mask = storage_mask_literal(def.args.storage, physical.mask);
+            quote! {
+                (((self.0 & #segment_mask) >> #shift) << #value_offset)
+            }
+        });
+        let gathered = quote! { (0 #(| #gather_contributions)*) };
+
+        // Generate getter.
         let getter_body = match &field.ty {
             FieldType::Bool => {
-                quote! { (self.0 & Self::#mask_name) != 0 }
+                quote! { #gathered != 0 }
             }
             FieldType::PrimitiveUnsigned(sk) => {
                 let field_ty = format_ident!("{}", sk.unsigned_ident());
-                // Mask before shifting: computing the width mask at runtime as
-                // `(1 << width) - 1` overflows when the field spans the full
-                // storage width.
-                quote! { ((self.0 & Self::#mask_name) >> Self::#shift_name) as #field_ty }
+                quote! { #gathered as #field_ty }
             }
             FieldType::PrimitiveSigned(sk) => {
                 let field_ty = format_ident!("{}", sk.signed_ident());
                 let unsigned_ty = format_ident!("{}", sk.unsigned_ident());
                 let sign_shift = sk.bit_width() - field_width;
                 quote! {
-                    ((((self.0 >> Self::#shift_name) as #unsigned_ty) << #sign_shift) as #field_ty) >> #sign_shift
+                    (((#gathered as #unsigned_ty) << #sign_shift) as #field_ty) >> #sign_shift
                 }
             }
             FieldType::Nested(ty) => {
@@ -185,7 +253,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                     StorageKind::smallest_fitting(field_width).unwrap_or(StorageKind::W128);
                 let nested_storage_ident = format_ident!("{}", nested_storage.unsigned_ident());
                 quote! {
-                    let bits = ((self.0 & Self::#mask_name) >> Self::#shift_name) as #nested_storage_ident;
+                    let bits = #gathered as #nested_storage_ident;
                     <#ty as ::chapa::BitField>::from_raw(bits)
                 }
             }
@@ -216,14 +284,9 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         if !field.readonly {
             let setter_name = format_ident!("set_{}", accessor, span = field.span);
             let with_name = format_ident!("with_{}", accessor, span = field.span);
-            let setter_doc = format!(
-                "Sets the `{}` field (bits {}..={}).",
-                accessor, field.range.start, field.range.end
-            );
-            let with_doc = format!(
-                "Returns a copy with the `{}` field set (bits {}..={}).",
-                accessor, field.range.start, field.range.end
-            );
+            let setter_doc = format!("Sets the `{accessor}` field (bits {ranges_doc}).");
+            let with_doc =
+                format!("Returns a copy with the `{accessor}` field set (bits {ranges_doc}).");
 
             let param_ty = match &field.ty {
                 FieldType::Bool => quote! { bool },
