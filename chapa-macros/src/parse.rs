@@ -105,12 +105,17 @@ fn parse_bit_range(input: ParseStream) -> syn::Result<BitRange> {
     }
     let end_lit: LitInt = input.parse()?;
     let end_val: u32 = end_lit.base10_parse()?;
-    let end = if inclusive {
-        end_val
+    let (start, end) = if inclusive {
+        (start.min(end_val), start.max(end_val))
+    } else if start < end_val {
+        (start, end_val - 1)
+    } else if start > end_val {
+        (end_val + 1, start)
     } else {
-        end_val.checked_sub(1).ok_or_else(|| {
-            syn::Error::new(end_lit.span(), "half-open bit range ending at 0 is empty")
-        })?
+        return Err(syn::Error::new(
+            end_lit.span(),
+            "half-open bit range is empty",
+        ));
     };
 
     Ok(BitRange { start, end, span })

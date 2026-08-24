@@ -4,7 +4,7 @@ use chapa::{bitfield, FieldSegment};
 #[bitfield(u32, order = msb0)]
 #[derive(Debug, PartialEq, Default)]
 pub struct ArmMovT3 {
-    #[bits(12..=15, 5, 17..=19, 24..=31, default = 0xABCD)]
+    #[bits(15..=12, 5, 19..=17, 31..=24, default = 0xABCD)]
     imm16: u16,
 }
 
@@ -82,6 +82,28 @@ fn lsb0_ranges_still_concatenate_most_significant_chunk_first() {
 
     assert_eq!(value.raw(), 0xA013_00CD);
     assert_eq!(value.imm16(), 0xABCD);
+}
+
+#[bitfield(u16, order = lsb0)]
+#[derive(Debug, PartialEq)]
+pub struct DescendingRanges {
+    #[bits(10..=0)]
+    inclusive: u16,
+
+    #[bits(15..11)]
+    half_open: u8,
+}
+
+#[test]
+fn descending_endpoints_select_the_same_bits_as_ascending_endpoints() {
+    let inclusive = DescendingRanges::zeroed().with_inclusive(0x5A5);
+    assert_eq!(inclusive.raw(), 0x05A5);
+    assert_eq!(inclusive.inclusive(), 0x5A5);
+
+    // The endpoint remains exclusive: 15..11 selects bits 15 through 12.
+    let half_open = DescendingRanges::zeroed().with_half_open(0xA);
+    assert_eq!(half_open.raw(), 0xA000);
+    assert_eq!(half_open.half_open(), 0xA);
 }
 
 #[bitfield(u16, order = lsb0)]

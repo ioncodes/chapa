@@ -69,8 +69,8 @@ assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 | Option              | Description                                        |
 | ------------------- | -------------------------------------------------- |
 | `N`                 | Single bit at index N                              |
-| `N..=M`             | Inclusive range from bit N to bit M                |
-| `N..M`              | Half-open range (equivalent to `N..=(M-1)`)        |
+| `N..=M` / `M..=N`  | Inclusive range; endpoints may use either order    |
+| `N..M` / `M..N`    | Half-open range; the second endpoint is excluded   |
 | `R1, R2, ...`       | Concatenate ranges from most- to least-significant |
 | `readonly`          | Suppress `set_*` and `with_*` generation           |
 | `default = <expr>`  | Starting value applied by `default()`              |
@@ -82,6 +82,10 @@ A field's type may be `bool` (single bit), an unsigned integer (`u8`...`u128`),
 a signed integer (`i8`...`i128`, two's-complement: sign-extended on read,
 truncated to the field width on write), a `#[bitenum]` enum, or another
 bitfield struct.
+
+Range direction does not reverse the encoded value. For example, `10..=0`
+selects the same bits and has the same behavior as `0..=10`; descending syntax
+is provided so declarations can follow the notation used in datasheets.
 
 ## MSB-0 example
 
