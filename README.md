@@ -419,7 +419,7 @@ Enable the `reflection` feature to get compile-time field metadata for every
 
 ```toml
 [dependencies]
-chapa = { version = "0.9", features = ["reflection"] }
+chapa = { version = "0.10", features = ["reflection"] }
 ```
 
 Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
