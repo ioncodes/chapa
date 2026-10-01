@@ -20,8 +20,7 @@ use crate::ordering;
 /// - `to_{le,be,ne}_bytes()` / `from_{le,be,ne}_bytes()` inherent methods.
 /// - `{wrapping,saturating,checked,overflowing}_{add,sub}()` inherent methods
 ///   operating on the raw storage value.
-/// - `field()` getter, `set_field()` setter, and `with_field()` builder for each
-///   non-readonly field; only the getter for readonly fields.
+/// - Accessors according to each field's readonly, writeonly, and fixed options.
 /// - Alias methods for every `alias = ...` annotation.
 /// - `BitField`, `From<Storage>`, and `From<Self>` trait impls.
 pub fn generate(def: &BitfieldDef) -> TokenStream {
@@ -67,6 +66,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     let mut default_contribs = Vec::new();
     // Per-field `FieldInfo` literals for the `reflection` feature.
     let mut field_infos = Vec::new();
+    let mut fixed_constraints = Vec::new();
 
     for field in &def.fields {
         let field_width = field.width();
@@ -179,6 +179,54 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             default_contribs.push(insert(&quote! { (#default_expr) }));
         }
 
+        let value_mask = u128::MAX >> (128 - field_width);
+        let fixed_metadata = if let Some(expr) = &field.fixed {
+            let ty = &field.raw_ty;
+            let unsigned_value = match field.ty {
+                FieldType::PrimitiveUnsigned(StorageKind::W128) => quote! { value },
+                _ => quote! { value as u128 },
+            };
+            let fit_check = match field.ty {
+                FieldType::PrimitiveUnsigned(_) => quote! {
+                    assert!((#unsigned_value) <= #value_mask, "fixed value does not fit field width");
+                },
+                FieldType::PrimitiveSigned(_) if field_width < 128 => {
+                    let min = -(1i128 << (field_width - 1));
+                    let max = (1i128 << (field_width - 1)) - 1;
+                    let signed_value = match field.ty {
+                        FieldType::PrimitiveSigned(StorageKind::W128) => quote! { value },
+                        _ => quote! { value as i128 },
+                    };
+                    quote! {
+                        assert!((#signed_value) >= #min && (#signed_value) <= #max,
+                            "fixed value does not fit field width");
+                    }
+                }
+                _ => quote! {},
+            };
+            let raw = quote_spanned! { field.span => {
+                let value: #ty = #expr;
+                #fit_check
+                (#unsigned_value) & #value_mask
+            }};
+            let packed = pack(quote! { (#raw) as #storage_ident });
+            fixed_constraints.push(quote! { (#mask_literal, #packed) });
+            quote! { Some(#raw) }
+        } else {
+            if let FieldType::Nested(ty) = &field.ty {
+                let mask =
+                    pack(quote! { <#ty as ::chapa::BitField>::FIXED_MASK as #storage_ident });
+                let value =
+                    pack(quote! { <#ty as ::chapa::BitField>::FIXED_VALUE as #storage_ident });
+                fixed_constraints.push(quote_spanned! { field.span => {
+                    assert!(<#ty as ::chapa::BitField>::FIXED_MASK & !#value_mask == 0,
+                        "nested field is too narrow to preserve its fixed bits");
+                    (#mask, #value)
+                }});
+            }
+            quote! { None }
+        };
+
         let getter_name = format_ident!("{}", accessor, span = field.span);
         let ranges_doc = field
             .ranges
@@ -206,7 +254,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 FieldType::PrimitiveSigned(_) => quote! { ::chapa::FieldKind::Sint },
                 FieldType::Nested(ty) => quote! { <#ty as ::chapa::Reflect>::REFLECT },
             };
-            let readonly = field.readonly;
+            let readonly = field.readonly || field.fixed.is_some();
+            let writeonly = field.writeonly;
             let aliases = &field.aliases;
             field_infos.push(quote! {
                 ::chapa::FieldInfo {
@@ -216,6 +265,8 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                     segments: #name::#segments_name,
                     aliases: &[ #(#aliases),* ],
                     readonly: #readonly,
+                    writeonly: #writeonly,
+                    fixed: #fixed_metadata,
                     kind: #field_kind,
                 }
             });
@@ -272,16 +323,18 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             FieldType::Nested(ty) => quote! { #ty },
         };
 
-        methods.push(quote! {
-            #[doc = #getter_doc]
-            #[inline(always)]
-            #vis #maybe_const fn #getter_name(&self) -> #return_ty {
-                #getter_body
-            }
-        });
+        if !field.writeonly {
+            methods.push(quote! {
+                #[doc = #getter_doc]
+                #[inline(always)]
+                #vis #maybe_const fn #getter_name(&self) -> #return_ty {
+                    #getter_body
+                }
+            });
+        }
 
         // Generate setter and with_* (unless readonly)
-        if !field.readonly {
+        if !field.readonly && field.fixed.is_none() {
             let setter_name = format_ident!("set_{}", accessor, span = field.span);
             let with_name = format_ident!("with_{}", accessor, span = field.span);
             let setter_doc = format!("Sets the `{accessor}` field (bits {ranges_doc}).");
@@ -305,7 +358,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             // OR in the new value; `const` is gated on the field type (see above).
             let value = insert(&quote! { val });
             let mutate_body = quote! {
-                self.0 = (self.0 & !Self::#mask_name) | #value;
+                self.0 = Self::from_raw((self.0 & !Self::#mask_name) | #value).0;
             };
 
             methods.push(quote! {
@@ -337,14 +390,16 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 let doc_alias_with =
                     format!("Alias for [`with_{}`](Self::with_{}).", accessor, accessor);
 
-                methods.push(quote! {
-                    #[doc = #doc_alias]
-                    #[doc(alias = #accessor)]
-                    #[inline(always)]
-                    #vis #maybe_const fn #alias_getter(&self) -> #return_ty {
-                        self.#getter_name()
-                    }
-                });
+                if !field.writeonly {
+                    methods.push(quote! {
+                        #[doc = #doc_alias]
+                        #[doc(alias = #accessor)]
+                        #[inline(always)]
+                        #vis #maybe_const fn #alias_getter(&self) -> #return_ty {
+                            self.#getter_name()
+                        }
+                    });
+                }
 
                 methods.push(quote! {
                     #[doc = #doc_alias_set]
@@ -388,11 +443,23 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
     let trait_impl = quote! {
         impl ::chapa::BitField for #name {
             type Storage = #storage_ident;
+
             const IS_MSB0: bool = #is_msb0;
+            const FIXED_MASK: u128 = Self::__CHAPA_FIXED.0 as u128;
+            const FIXED_VALUE: u128 = Self::__CHAPA_FIXED.1 as u128;
+
+            #[inline(always)]
+            fn try_from_raw(raw: #storage_ident) -> Result<Self, ::chapa::InvalidBitPattern<#storage_ident>> {
+                if raw & Self::__CHAPA_FIXED.0 == Self::__CHAPA_FIXED.1 {
+                    Ok(Self(raw))
+                } else {
+                    Err(::chapa::InvalidBitPattern::new(raw))
+                }
+            }
 
             #[inline(always)]
             fn from_raw(raw: #storage_ident) -> Self {
-                Self(raw)
+                Self::from_raw(raw)
             }
 
             #[inline(always)]
@@ -407,7 +474,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         impl From<#storage_ident> for #name {
             #[inline(always)]
             fn from(val: #storage_ident) -> Self {
-                Self(val)
+                Self::from_raw(val)
             }
         }
 
@@ -436,7 +503,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             type Output = Self;
             #[inline(always)]
             fn bitand(self, rhs: Rhs) -> Self {
-                Self(self.0 & ::chapa::BitOperand::into_storage(rhs))
+                Self::from_raw(self.0 & ::chapa::BitOperand::into_storage(rhs))
             }
         }
         impl<Rhs> ::core::ops::BitOr<Rhs> for #name
@@ -446,7 +513,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             type Output = Self;
             #[inline(always)]
             fn bitor(self, rhs: Rhs) -> Self {
-                Self(self.0 | ::chapa::BitOperand::into_storage(rhs))
+                Self::from_raw(self.0 | ::chapa::BitOperand::into_storage(rhs))
             }
         }
         impl<Rhs> ::core::ops::BitXor<Rhs> for #name
@@ -456,13 +523,13 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
             type Output = Self;
             #[inline(always)]
             fn bitxor(self, rhs: Rhs) -> Self {
-                Self(self.0 ^ ::chapa::BitOperand::into_storage(rhs))
+                Self::from_raw(self.0 ^ ::chapa::BitOperand::into_storage(rhs))
             }
         }
         impl ::core::ops::Not for #name {
             type Output = Self;
             #[inline(always)]
-            fn not(self) -> Self { Self(!self.0) }
+            fn not(self) -> Self { Self::from_raw(!self.0) }
         }
         impl<Rhs> ::core::ops::BitAndAssign<Rhs> for #name
         where
@@ -470,7 +537,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         {
             #[inline(always)]
             fn bitand_assign(&mut self, rhs: Rhs) {
-                self.0 &= ::chapa::BitOperand::into_storage(rhs);
+                *self = Self::from_raw(self.0 & ::chapa::BitOperand::into_storage(rhs));
             }
         }
         impl<Rhs> ::core::ops::BitOrAssign<Rhs> for #name
@@ -479,7 +546,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         {
             #[inline(always)]
             fn bitor_assign(&mut self, rhs: Rhs) {
-                self.0 |= ::chapa::BitOperand::into_storage(rhs);
+                *self = Self::from_raw(self.0 | ::chapa::BitOperand::into_storage(rhs));
             }
         }
         impl<Rhs> ::core::ops::BitXorAssign<Rhs> for #name
@@ -488,7 +555,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         {
             #[inline(always)]
             fn bitxor_assign(&mut self, rhs: Rhs) {
-                self.0 ^= ::chapa::BitOperand::into_storage(rhs);
+                *self = Self::from_raw(self.0 ^ ::chapa::BitOperand::into_storage(rhs));
             }
         }
     };
@@ -512,15 +579,20 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         }
     };
 
-    // A field default automatically enables Default. An explicit derive also
+    // A field default or fixed declaration automatically enables Default. An explicit derive also
     // works and returns zeroed() when no field defaults are present.
-    let default_impl = if default_span.is_some() || def.fields.iter().any(|f| f.default.is_some()) {
+    let default_impl = if default_span.is_some()
+        || def
+            .fields
+            .iter()
+            .any(|f| f.default.is_some() || f.fixed.is_some())
+    {
         let span = default_span.unwrap_or_else(proc_macro2::Span::call_site);
         quote_spanned! { span =>
             impl ::core::default::Default for #name {
                 #[inline(always)]
                 fn default() -> Self {
-                    Self(0 #( | #default_contribs )*)
+                    Self::from_raw(0 #( | #default_contribs )*)
                 }
             }
         }
@@ -534,6 +606,7 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         let debug_fields: Vec<TokenStream> = def
             .fields
             .iter()
+            .filter(|field| !field.writeonly)
             .map(|field| {
                 let getter = format_ident!("{}", field.accessor_name);
                 let field_str = &field.accessor_name;
@@ -578,32 +651,35 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 #[doc = #wrapping_doc]
                 ///
                 /// Operates on the full storage value, so carries and borrows
-                /// propagate across field boundaries.
+                /// propagate across field boundaries. Fixed bits are restored afterward;
+                /// overflow reporting describes the raw integer operation.
                 #[inline(always)]
                 #[must_use]
                 #vis const fn #wrapping_fn(self, rhs: #storage_ident) -> Self {
-                    Self(self.0.#wrapping_fn(rhs))
+                    Self::from_raw(self.0.#wrapping_fn(rhs))
                 }
 
                 #[doc = #saturating_doc]
                 ///
                 /// Operates on the full storage value, so carries and borrows
-                /// propagate across field boundaries.
+                /// propagate across field boundaries. Fixed bits are restored afterward;
+                /// overflow reporting describes the raw integer operation.
                 #[inline(always)]
                 #[must_use]
                 #vis const fn #saturating_fn(self, rhs: #storage_ident) -> Self {
-                    Self(self.0.#saturating_fn(rhs))
+                    Self::from_raw(self.0.#saturating_fn(rhs))
                 }
 
                 #[doc = #checked_doc]
                 ///
                 /// Operates on the full storage value, so carries and borrows
-                /// propagate across field boundaries.
+                /// propagate across field boundaries. Fixed bits are restored afterward;
+                /// overflow reporting describes the raw integer operation.
                 #[inline(always)]
                 #[must_use]
                 #vis const fn #checked_fn(self, rhs: #storage_ident) -> Option<Self> {
                     match self.0.#checked_fn(rhs) {
-                        Some(val) => Some(Self(val)),
+                        Some(val) => Some(Self::from_raw(val)),
                         None => None,
                     }
                 }
@@ -611,12 +687,13 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 #[doc = #overflowing_doc]
                 ///
                 /// Operates on the full storage value, so carries and borrows
-                /// propagate across field boundaries.
+                /// propagate across field boundaries. Fixed bits are restored afterward;
+                /// overflow reporting describes the raw integer operation.
                 #[inline(always)]
                 #[must_use]
                 #vis const fn #overflowing_fn(self, rhs: #storage_ident) -> (Self, bool) {
                     let (val, overflowed) = self.0.#overflowing_fn(rhs);
-                    (Self(val), overflowed)
+                    (Self::from_raw(val), overflowed)
                 }
             }
         })
@@ -640,10 +717,10 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
                 #[doc = #from_doc]
                 ///
                 /// Preserves the full storage value, including bits outside the
-                /// bitfield width.
+                /// bitfield width, except that fixed bits are restored.
                 #[inline(always)]
                 #vis const fn #from_fn(bytes: [u8; #byte_count]) -> Self {
-                    Self(#storage_ident::#from_fn(bytes))
+                    Self::from_raw(#storage_ident::#from_fn(bytes))
                 }
             }
         })
@@ -670,22 +747,41 @@ pub fn generate(def: &BitfieldDef) -> TokenStream {
         #struct_def
         #span_anchor
 
+        // Evaluate constraints even if no constructor is used.
+        const _: () = { let _ = #name::__CHAPA_FIXED; };
+
         impl #name {
             #(#consts)*
 
-            /// Creates an instance with all bits set to zero.
+            const __CHAPA_FIXED: (#storage_ident, #storage_ident) = {
+                let constraints: &[(#storage_ident, #storage_ident)] = &[#(#fixed_constraints),*];
+                let mut mask = 0;
+                let mut value = 0;
+                let mut i = 0;
+                while i < constraints.len() {
+                    let (next_mask, next_value) = constraints[i];
+                    assert!((value ^ next_value) & mask & next_mask == 0,
+                        "overlapping fixed fields require conflicting values");
+                    mask |= next_mask;
+                    value |= next_value;
+                    i += 1;
+                }
+                (mask, value)
+            };
+
+            /// Creates an instance with unconstrained bits zero and fixed values applied.
             ///
             /// Field `default = ...` values are applied by `Default::default`,
             /// not here.
             #[inline(always)]
             #vis const fn zeroed() -> Self {
-                Self(0)
+                Self::from_raw(0)
             }
 
-            /// Creates an instance from a raw storage value.
+            /// Creates an instance from a raw storage value, restoring fixed bits.
             #[inline(always)]
             #vis const fn from_raw(val: #storage_ident) -> Self {
-                Self(val)
+                Self((val & !Self::__CHAPA_FIXED.0) | Self::__CHAPA_FIXED.1)
             }
 
             /// Returns the raw storage value.

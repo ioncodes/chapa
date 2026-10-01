@@ -26,6 +26,26 @@ pub fn validate(def: &BitfieldDef) -> syn::Result<()> {
     for e in validate_overlaps(def) {
         push_err(e);
     }
+    for f in &def.fields {
+        if f.writeonly && (f.readonly || f.fixed.is_some()) {
+            push_err(syn::Error::new(
+                f.span,
+                "`writeonly` cannot be combined with `readonly`, an underscore prefix, or `fixed`",
+            ));
+        }
+        if f.fixed.is_some() && f.default.is_some() {
+            push_err(syn::Error::new(
+                f.span,
+                "`fixed` cannot be combined with `default`",
+            ));
+        }
+        if f.fixed.is_some() && matches!(f.ty, FieldType::Nested(_)) {
+            push_err(syn::Error::new(
+                f.span,
+                "`fixed` requires a bool or integer field",
+            ));
+        }
+    }
     for e in validate_aliases(def) {
         push_err(e);
     }
@@ -152,8 +172,8 @@ fn validate_field_types(def: &BitfieldDef) -> Vec<syn::Error> {
 
 /// Checks for illegal bit-range overlaps between fields.
 ///
-/// Overlaps are allowed only between fields that belong to **different** overlay
-/// groups (`overlay = "..."`). Overlaps between two base fields, between a base
+/// Fixed fields may overlap any field; generated const checks reject conflicting
+/// values. Other overlaps require **different** overlay groups (`overlay = "..."`). Overlaps between two base fields, between a base
 /// field and an overlay field, or between two fields in the **same** overlay
 /// group are all errors.
 fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
@@ -174,6 +194,12 @@ fn validate_overlaps(def: &BitfieldDef) -> Vec<syn::Error> {
             let Some((a_range, b_range)) = overlap else {
                 continue;
             };
+
+            // Fixed constraints may overlap any field; generated const checks
+            // reject contradictory fixed values.
+            if a.fixed.is_some() || b.fixed.is_some() {
+                continue;
+            }
 
             let a_overlay = a.overlay.as_deref();
             let b_overlay = b.overlay.as_deref();

@@ -177,6 +177,10 @@ pub struct FieldDef {
     pub ranges: Vec<BitRange>,
     /// Whether setters should be suppressed.
     pub readonly: bool,
+    /// Whether getters should be suppressed.
+    pub writeonly: bool,
+    /// Constant value enforced in storage.
+    pub fixed: Option<syn::Expr>,
     /// Extra accessor names declared with `alias = ...`.
     pub aliases: Vec<String>,
     /// Overlay group name declared with `overlay = "..."`, if any.

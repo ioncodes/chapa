@@ -80,6 +80,8 @@ impl Parse for BitfieldArgs {
 struct BitsAttr {
     ranges: Vec<BitRange>,
     readonly: bool,
+    writeonly: bool,
+    fixed: Option<syn::Expr>,
     aliases: Vec<String>,
     overlay: Option<String>,
     default: Option<syn::Expr>,
@@ -123,6 +125,8 @@ fn parse_bit_range(input: ParseStream) -> syn::Result<BitRange> {
 
 fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
     let mut readonly = false;
+    let mut writeonly = false;
+    let mut fixed = None;
     let mut aliases = Vec::new();
     let mut overlay = None;
     let mut default = None;
@@ -152,6 +156,16 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
         match key.to_string().as_str() {
             "readonly" => {
                 readonly = true;
+            }
+            "writeonly" => {
+                writeonly = true;
+            }
+            "fixed" => {
+                input.parse::<Token![=]>()?;
+                if fixed.is_some() {
+                    return Err(syn::Error::new(key.span(), "duplicate `fixed` attribute"));
+                }
+                fixed = Some(input.parse()?);
             }
             "alias" => {
                 input.parse::<Token![=]>()?;
@@ -193,6 +207,8 @@ fn parse_bits_attr(input: ParseStream) -> syn::Result<BitsAttr> {
     Ok(BitsAttr {
         ranges,
         readonly,
+        writeonly,
+        fixed,
         aliases,
         overlay,
         default,
@@ -265,6 +281,8 @@ pub fn parse_struct(args: &BitfieldArgs, item: &syn::ItemStruct) -> syn::Result<
             raw_ty: field.ty.clone(),
             ranges: parsed.ranges,
             readonly,
+            writeonly: parsed.writeonly,
+            fixed: parsed.fixed,
             aliases: parsed.aliases,
             overlay: parsed.overlay,
             default: parsed.default,

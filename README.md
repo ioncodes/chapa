@@ -18,7 +18,9 @@ type.
 - **Signed fields**: `i8`...`i128` field types with automatic sign extension
 - **Enum fields**: Use enums as bitfield fields with `#[bitenum]`
 - **Nested bitfields**: Embed one bitfield struct inside another
-- **Readonly fields**: Suppress setter generation with `readonly` or a leading `_` prefix
+- **Read-only fields**: Suppress setter generation with `readonly` or a leading `_` prefix
+- **Write-only fields**: Suppress getters with `writeonly`
+- **Fixed values**: Enforce constant bits with `fixed = ...`
 - **Default values**: Set a field's initial value with `default = ...`
 - **Aliases**: Expose extra accessor names with `alias = "name"` or `alias = ["a", "b"]`
 - **Overlays**: Allow multiple logically distinct field groups to share the same bit range
@@ -69,10 +71,12 @@ assert_eq!(r.reserved(), 0);    // accessible as `reserved`, not `_reserved`
 | Option              | Description                                        |
 | ------------------- | -------------------------------------------------- |
 | `N`                 | Single bit at index N                              |
-| `N..=M` / `M..=N`  | Inclusive range; endpoints may use either order    |
-| `N..M` / `M..N`    | Half-open range; the second endpoint is excluded   |
+| `N..=M` / `M..=N`   | Inclusive range; endpoints may use either order    |
+| `N..M` / `M..N`     | Half-open range; the second endpoint is excluded   |
 | `R1, R2, ...`       | Concatenate ranges from most- to least-significant |
 | `readonly`          | Suppress `set_*` and `with_*` generation           |
+| `writeonly`         | Suppress the getter; keep setter and builder       |
+| `fixed = <expr>`    | Enforce a constant bool or integer value           |
 | `default = <expr>`  | Starting value applied by `default()`              |
 | `alias = "name"`    | Generate additional accessor under `name`          |
 | `alias = ["a","b"]` | Multiple aliases                                   |
@@ -228,13 +232,82 @@ assert_eq!((i_form.dst(), i_form.imm()), (7, 0x1_2345));
 assert_eq!(i_form.rs(), i_form.dst()); // Both names cover bits 6..=10
 ```
 
+## Read and write register layouts
+
+`writeonly` suppresses a field's getter while retaining its setter and `with_*`
+builder. Aliases follow the same access permissions. Generated `Debug` output
+omits write-only fields tho the reflection feature includes them with `writeonly: true`.
+Combining `writeonly` with `readonly`, a leading underscore, or `fixed` is an
+error!
+
+Use overlay groups to describe different read and write interpretations of the
+same register. For example, these are the SP/SI read bits and SP write commands
+of the [N64 MI_MASK register](https://n64brew.dev/wiki/MIPS_Interface#0x0430_000C_-_MI_MASK):
+
+```rust
+use chapa::bitfield;
+
+#[bitfield(u32, order = lsb0)]
+pub struct MiMask {
+    #[bits(0, readonly, overlay = "read")]
+    sp_enabled: bool,
+    #[bits(1, readonly, overlay = "read")]
+    si_enabled: bool,
+    #[bits(0, writeonly, overlay = "write")]
+    clear_sp: bool,
+    #[bits(1, writeonly, overlay = "write")]
+    set_sp: bool,
+}
+
+let status = MiMask::from_raw(1); // Value already read from hardware.
+assert!(status.sp_enabled());
+let command = MiMask::zeroed().with_set_sp(true);
+assert_eq!(command.raw(), 2);     // Value to write to hardware.
+```
+
+## Fixed bit values
+
+`fixed = <const expr>` enforces a boolean or integer field's value across
+construction and mutation. Fixed fields have getters (including aliases), but
+no setters or builders. A fixed declaration also enables `Default`.
+
+```rust
+use chapa::{bitfield, BitField};
+
+#[bitfield(u8, order = lsb0)]
+pub struct Control {
+    #[bits(0..=7)]
+    value: u8,
+    #[bits(5, fixed = true)]
+    required: bool,
+    #[bits(6..=7, fixed = 0)]
+    reserved: u8,
+}
+
+assert_eq!(Control::zeroed().raw(), 0x20);
+assert_eq!(Control::from_raw(0xFF).raw(), 0x3F);
+assert_eq!(Control::zeroed().with_value(0xFF).raw(), 0x3F);
+assert_eq!((Control::zeroed() & 0u8).raw(), 0x20);
+assert!(Control::try_from_raw(0).is_err());
+assert!(Control::try_from_raw(0x20).is_ok());
+```
+
+Fixed fields may overlap other fields without overlay annotations. Writes to
+these positions are ignored and the fixed values win. Overlapping fixed
+constraints must agree. `fixed` combined with `default` is a compile-time error.
+
+`from_raw()`, `From<Storage>`, byte constructors, **`zeroed()`** (yes! see below),
+`default()`, setters, bitwise operators, arithmetic, and the bitfield forms of the insertion and
+extraction macros all restore fixed bits.
+
 ## Constructors and default values
 
-Every struct has a `const fn zeroed()` that returns an all-zero value. There is
-no `new()`. Add `default = <expr>` to give a field a different initial value.
-This automatically implements `Default`. The `zeroed()` and `from_raw()`
-methods do not apply field defaults. If no fields have defaults, you can still
-use `#[derive(Default)]` to make `default()` return `zeroed()`.
+Every struct has a `const fn zeroed()` that zeros unconstrained bits and applies
+fixed values. There is no `new()`. Add `default = <expr>` to give a field a
+different initial value. This automatically implements `Default`. The
+`zeroed()` and `from_raw()` methods do not apply field defaults. If no fields
+have defaults or fixed values, you can still use `#[derive(Default)]` to make
+`default()` return `zeroed()`.
 
 `default` works on any field type (`bool`, integer, `#[bitenum]` enum,
 or nested bitfield, e.g. `default = Mode::On`), including `readonly` ones.
@@ -419,7 +492,7 @@ Enable the `reflection` feature to get compile-time field metadata for every
 
 ```toml
 [dependencies]
-chapa = { version = "0.10", features = ["reflection"] }
+chapa = { version = "0.11", features = ["reflection"] }
 ```
 
 Each bitfield struct gains an inherent `FIELDS: &'static [FieldInfo]` const
@@ -495,7 +568,7 @@ Every struct also provides these methods (`N` is the storage size in bytes):
 | Arithmetic | `pub const fn overflowing_add(self, rhs: StorageType) -> (Self, bool)` (same shape for `overflowing_sub`)                       |
 
 The byte conversions and arithmetic methods operate on the full storage value,
-matching `raw()` and `from_raw()`.
+with fixed bits restored on input and arithmetic results.
 
 Additionally, every struct implements the following traits:
 

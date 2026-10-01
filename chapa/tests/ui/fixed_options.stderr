@@ -1,0 +1,17 @@
+error: `fixed` cannot be combined with `default`
+ --> tests/ui/fixed_options.rs:6:5
+  |
+6 |     value: bool,
+  |     ^^^^^
+
+error: duplicate `fixed` attribute
+  --> tests/ui/fixed_options.rs:10:29
+   |
+10 |     #[bits(0, fixed = true, fixed = true)]
+   |                             ^^^^^
+
+error: `fixed` requires a bool or integer field
+  --> tests/ui/fixed_options.rs:16:5
+   |
+16 |     value: Custom,
+   |     ^^^^^

@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: overlapping fixed fields require conflicting values
+ --> tests/ui/nested_conflict.rs:8:1
+  |
+8 | #[bitfield(u8, order = lsb0)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `Parent::__CHAPA_FIXED` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/nested_conflict.rs:8:1
+  |
+8 | #[bitfield(u8, order = lsb0)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this note originates in the attribute macro `bitfield` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,85 @@
+error[E0599]: no method named `write` found for struct `Reg` in the current scope
+  --> tests/ui/accessors.rs:13:7
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ----------------------------- method `write` not found for this struct
+...
+13 |     r.write();
+   |       ^^^^^
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `write`, perhaps you need to implement one of them:
+           candidate #1: `Hasher`
+           candidate #2: `std::io::Write`
+help: there is a method `set_command` with a similar name, but with different arguments
+  --> tests/ui/accessors.rs:3:1
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the attribute macro `bitfield` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: no method named `command` found for struct `Reg` in the current scope
+  --> tests/ui/accessors.rs:14:7
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ----------------------------- method `command` not found for this struct
+...
+14 |     r.command();
+   |       ^^^^^^^
+   |
+help: there is a method `set_command` with a similar name, but with different arguments
+  --> tests/ui/accessors.rs:3:1
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the attribute macro `bitfield` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: no method named `set_one` found for struct `Reg` in the current scope
+  --> tests/ui/accessors.rs:15:7
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ----------------------------- method `set_one` not found for this struct
+...
+15 |     r.set_one(false);
+   |       ^^^^^^^ method not found in `Reg`
+
+error[E0599]: no method named `with_one` found for struct `Reg` in the current scope
+  --> tests/ui/accessors.rs:16:7
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ----------------------------- method `with_one` not found for this struct
+...
+16 |     r.with_one(false);
+   |       ^^^^^^^^ method not found in `Reg`
+
+error[E0599]: no method named `set_constant` found for struct `Reg` in the current scope
+  --> tests/ui/accessors.rs:17:7
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ----------------------------- method `set_constant` not found for this struct
+...
+17 |     r.set_constant(false);
+   |       ^^^^^^^^^^^^
+   |
+help: there is a method `constant` with a similar name, but with different arguments
+  --> tests/ui/accessors.rs:3:1
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the attribute macro `bitfield` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: no method named `with_constant` found for struct `Reg` in the current scope
+  --> tests/ui/accessors.rs:18:7
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ----------------------------- method `with_constant` not found for this struct
+...
+18 |     r.with_constant(false);
+   |       ^^^^^^^^^^^^^
+   |
+help: there is a method `constant` with a similar name, but with different arguments
+  --> tests/ui/accessors.rs:3:1
+   |
+ 3 | #[bitfield(u8, order = lsb0)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the attribute macro `bitfield` (in Nightly builds, run with -Z macro-backtrace for more info)

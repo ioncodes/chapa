@@ -1,0 +1,17 @@
+error: `writeonly` cannot be combined with `readonly`, an underscore prefix, or `fixed`
+ --> tests/ui/access_conflicts.rs:6:5
+  |
+6 |     value: bool,
+  |     ^^^^^
+
+error: `writeonly` cannot be combined with `readonly`, an underscore prefix, or `fixed`
+  --> tests/ui/access_conflicts.rs:11:5
+   |
+11 |     _value: bool,
+   |     ^^^^^^
+
+error: `writeonly` cannot be combined with `readonly`, an underscore prefix, or `fixed`
+  --> tests/ui/access_conflicts.rs:16:5
+   |
+16 |     value: bool,
+   |     ^^^^^
